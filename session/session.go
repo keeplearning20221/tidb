@@ -209,6 +209,9 @@ type Session interface {
 
 	// SetExtensions sets the `*extension.SessionExtensions` object
 	SetExtensions(extensions *extension.SessionExtensions)
+
+	SetSessionExec(cc sessionctx.SessionExec)
+	GetSessionExec() sessionctx.SessionExec
 }
 
 var _ Session = (*session)(nil)
@@ -295,6 +298,8 @@ type session struct {
 	extensions *extension.SessionExtensions
 
 	sandBoxMode bool
+
+	writeResultset sessionctx.SessionExec
 }
 
 var parserPool = &sync.Pool{New: func() interface{} { return parser.New() }}
@@ -4183,4 +4188,12 @@ func RemoveLockDDLJobs(s Session, job2ver map[int64]int64, job2ids map[int64]str
 		}
 		return true
 	})
+}
+
+func (s *session) SetSessionExec(cc sessionctx.SessionExec) {
+	s.writeResultset = cc
+}
+
+func (s *session) GetSessionExec() sessionctx.SessionExec {
+	return s.writeResultset
 }

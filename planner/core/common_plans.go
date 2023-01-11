@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
@@ -1352,4 +1353,22 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 // used for fast plan like point get
 func IsAutoCommitTxn(ctx sessionctx.Context) bool {
 	return ctx.GetSessionVars().IsAutocommit() && !ctx.GetSessionVars().InTxn()
+}
+
+type CreateProcedure struct {
+	baseSchemaProducer
+	ProcedureInfo ast.StmtNode
+	is            infoschema.InfoSchema
+}
+
+type DropProcedure struct {
+	baseSchemaProducer
+	Procedure *ast.DropProcedureStmt
+	is        infoschema.InfoSchema
+}
+
+type CallStmt struct {
+	baseSchemaProducer
+	Callstmt *ast.CallStmt
+	is       infoschema.InfoSchema
 }

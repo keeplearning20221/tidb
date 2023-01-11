@@ -1339,6 +1339,9 @@ type SessionVars struct {
 
 	// ProtectedTSList holds a list of timestamps that should delay GC.
 	ProtectedTSList protectedTSList
+
+	// in call procedure status
+	inCallProcedure bool
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
@@ -1729,6 +1732,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableReuseCheck:              DefTiDBEnableReusechunk,
 		preUseChunkAlloc:              DefTiDBUseAlloc,
 		ChunkPool:                     ReuseChunkPool{Alloc: nil},
+		inCallProcedure:               false,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -2388,6 +2392,18 @@ func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *se
 	s.StmtCtx.PrevLastInsertID = sessionStates.LastInsertID
 	s.StmtCtx.SetWarnings(sessionStates.Warnings)
 	return
+}
+
+func (s *SessionVars) SetInCallProcedure() {
+	s.inCallProcedure = true
+}
+
+func (s *SessionVars) OutCallProcedure() {
+	s.inCallProcedure = false
+}
+
+func (s *SessionVars) GetCallProcedure() bool {
+	return s.inCallProcedure
 }
 
 // TableDelta stands for the changed count for one table or partition.

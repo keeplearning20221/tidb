@@ -847,6 +847,12 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		return b.buildSplitRegion(x)
 	case *ast.CompactTableStmt:
 		return b.buildCompactTable(x)
+	case *ast.ProcedureInfo:
+		return b.buildCreateProcedure(ctx, node.(*ast.ProcedureInfo))
+	case *ast.DropProcedureStmt:
+		return b.buildDropProcedure(ctx, node.(*ast.DropProcedureStmt))
+	case *ast.CallStmt:
+		return b.buildCallProcedure(ctx, node.(*ast.CallStmt))
 	}
 	return nil, ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
 }
@@ -3178,6 +3184,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			CountWarningsOrErrors: show.CountWarningsOrErrors,
 			DBName:                show.DBName,
 			Table:                 show.Table,
+			Procedure:             show.Procedure,
 			Partition:             show.Partition,
 			Column:                show.Column,
 			IndexName:             show.IndexName,
@@ -5022,6 +5029,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		} else {
 			names = []string{"Table", "Create Table"}
 		}
+	case ast.ShowCreateProcedure:
+		names = []string{"Procedure", "sql_mode", "Create Procedure", "character_set_client", "collation_connection", "Database Collation"}
 	case ast.ShowCreatePlacementPolicy:
 		names = []string{"Policy", "Create Policy"}
 	case ast.ShowCreateUser:
@@ -5225,4 +5234,43 @@ func extractPatternLikeName(patternLike *ast.PatternLikeExpr) string {
 		return v.GetString()
 	}
 	return ""
+}
+
+func (b *PlanBuilder) buildCreateProcedure(ctx context.Context, node *ast.ProcedureInfo) (Plan, error) {
+	p := &CreateProcedure{ProcedureInfo: node, is: b.is}
+	procedurceSchema := node.ProcedureName.Schema.O
+	if procedurceSchema == "" {
+		procedurceSchema = b.ctx.GetSessionVars().CurrentDB
+		node.ProcedureName.Schema = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+	}
+	if procedurceSchema == "" {
+		return nil, ErrNoDB
+	}
+	return p, nil
+}
+
+func (b *PlanBuilder) buildDropProcedure(ctx context.Context, node *ast.DropProcedureStmt) (Plan, error) {
+	p := &DropProcedure{Procedure: node, is: b.is}
+	procedurceSchema := node.ProcedureName.Schema.O
+	if procedurceSchema == "" {
+		procedurceSchema = b.ctx.GetSessionVars().CurrentDB
+		node.ProcedureName.Schema = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+	}
+	if procedurceSchema == "" {
+		return nil, ErrNoDB
+	}
+	return p, nil
+}
+
+func (b *PlanBuilder) buildCallProcedure(ctx context.Context, node *ast.CallStmt) (Plan, error) {
+	p := &CallStmt{Callstmt: node, is: b.is}
+	procedurceSchema := node.Procedure.Schema.O
+	if procedurceSchema == "" {
+		procedurceSchema = b.ctx.GetSessionVars().CurrentDB
+		node.Procedure.Schema = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+	}
+	if procedurceSchema == "" {
+		return nil, ErrNoDB
+	}
+	return p, nil
 }

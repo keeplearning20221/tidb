@@ -309,6 +309,13 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildCTETableReader(v)
 	case *plannercore.CompactTable:
 		return b.buildCompactTable(v)
+	case *plannercore.CreateProcedure:
+		return b.buildCreateProcedure(v)
+	case *plannercore.DropProcedure:
+		return b.buildDropProcedure(v)
+	case *plannercore.CallStmt:
+		return b.buildCallProcedure(v)
+
 	default:
 		if mp, ok := p.(MockPhysicalPlan); ok {
 			return mp.GetExecutor()
@@ -774,6 +781,7 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) Executor {
 		CountWarningsOrErrors: v.CountWarningsOrErrors,
 		DBName:                model.NewCIStr(v.DBName),
 		Table:                 v.Table,
+		Procedure:             v.Procedure,
 		Partition:             v.Partition,
 		Column:                v.Column,
 		IndexName:             v.IndexName,

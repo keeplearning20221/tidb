@@ -155,6 +155,7 @@ import (
 	index             "INDEX"
 	infile            "INFILE"
 	inner             "INNER"
+	inout             "INOUT"              
 	integerType       "INTEGER"
 	intersect         "INTERSECT"
 	interval          "INTERVAL"
@@ -209,6 +210,7 @@ import (
 	optionally        "OPTIONALLY"
 	or                "OR"
 	order             "ORDER"
+	out               "OUT"
 	outer             "OUTER"
 	over              "OVER"
 	partition         "PARTITION"
@@ -373,6 +375,7 @@ import (
 	dateType              "DATE"
 	day                   "DAY"
 	deallocate            "DEALLOCATE"
+	declare               "DECLARE"
 	definer               "DEFINER"
 	delayKeyWrite         "DELAY_KEY_WRITE"
 	digest                "DIGEST"
@@ -895,6 +898,7 @@ import (
 	CreateImportStmt           "CREATE IMPORT statement"
 	CreateBindingStmt          "CREATE BINDING  statement"
 	CreatePolicyStmt           "CREATE PLACEMENT POLICY statement"
+	CreateProcedureStmt        "CREATE PROCEDURE statement"
 	CreateResourceGroupStmt    "CREATE RESOURCE GROUP statement"
 	CreateSequenceStmt         "CREATE SEQUENCE statement"
 	CreateStatisticsStmt       "CREATE STATISTICS statement"
@@ -905,6 +909,7 @@ import (
 	DropStatisticsStmt         "DROP STATISTICS statement"
 	DropStatsStmt              "DROP STATS statement"
 	DropTableStmt              "DROP TABLE statement"
+	DropProcedureStmt          "DROP PROCEDURE statement"
 	DropSequenceStmt           "DROP SEQUENCE statement"
 	DropUserStmt               "DROP USER"
 	DropRoleStmt               "DROP ROLE"
@@ -938,6 +943,8 @@ import (
 	NonTransactionalDMLStmt    "Non-transactional DML statement"
 	PlanReplayerStmt           "Plan replayer statement"
 	PreparedStmt               "PreparedStmt"
+	ProcedureProcStmt          "Stored procedure body"
+	ProcedureStatementStmt     "Stored procedure statement"
 	PurgeImportStmt            "PURGE IMPORT statement that removes a IMPORT task record"
 	SelectStmt                 "SELECT statement"
 	SelectStmtWithClause       "common table expression SELECT statement"
@@ -977,6 +984,8 @@ import (
 	UpdateStmtNoWith           "Update statement without CTE clause"
 	HelpStmt                   "HELP statement"
 	ShardableStmt              "Shardable statement that can be used in non-transactional DMLs"
+	ProcedureUnlabeledBlock                "Procedure unlabel block info"
+	ProcedureBlockContent                  "Procedure block info"
 
 %type	<item>
 	AdminShowSlow                          "Admin Show Slow statement"
@@ -1371,6 +1380,16 @@ import (
 	StatsOptionsOpt                        "Stats options"
 	DryRunOptions                          "Dry run options"
 	OptionalShardColumn                    "Optional shard column"
+	SpOptInout                             "Procedure param type"
+	OptSpPdparams                          "Opt procedure param list"
+	SpPdparams                             "Procedure params"
+	SpPdparam                              "Procedure param"
+	ProcedureOptDefault                    "Opt procedure default value"
+	ProcedureProcStmts                     "Procedure SQL stmts"
+	ProcedureDecl                          "Procedure variance info"
+	ProcedureDecls                         "Procedure variances info"
+	ProcedureDeclsOpt                      "Opt procedure variances info"
+	ProcedureDeclIdents                    "Procedure variances names"
 
 %type	<ident>
 	AsOpt             "AS or EmptyString"
@@ -8668,6 +8687,9 @@ SelectStmt:
 				lastEnd = yyS[yypt].offset - 1
 			} else {
 				lastEnd = len(src)
+				if lastEnd > 7 && src[lastEnd-7:lastEnd] == ";  END;" {
+					lastEnd = lastEnd - 7
+				}
 				if src[lastEnd-1] == ';' {
 					lastEnd--
 				}
@@ -10885,6 +10907,13 @@ ShowStmt:
 	{
 		$$ = $4.(*ast.ShowStmt)
 	}
+|   "SHOW" "CREATE" "PROCEDURE" TableName
+	{
+		$$ = &ast.ShowStmt{
+			Tp:    ast.ShowCreateProcedure,
+			Procedure: $4.(*ast.TableName),
+		}
+	}
 
 ShowPlacementTarget:
 	DatabaseSym DBName
@@ -11461,6 +11490,7 @@ Statement:
 |	CreateRoleStmt
 |	CreateBindingStmt
 |	CreatePolicyStmt
+|   CreateProcedureStmt
 |	CreateResourceGroupStmt
 |	CreateSequenceStmt
 |	CreateStatisticsStmt
@@ -11469,6 +11499,7 @@ Statement:
 |	DropImportStmt
 |	DropIndexStmt
 |	DropTableStmt
+|   DropProcedureStmt
 |	DropPolicyStmt
 |	DropSequenceStmt
 |	DropViewStmt
@@ -14637,4 +14668,237 @@ PlanReplayerStmt:
 
 		$$ = x
 	}
+
+
+/* Stored PROCEDURE parameter declaration list */
+OptSpPdparams:
+          /* Empty */ 
+		  {
+            $$ = []*ast.StoreParameter{};
+		  }
+        | SpPdparams 
+		  {
+			$$ = $1
+		  }
+        ;
+
+SpPdparams:
+        SpPdparams ',' SpPdparam
+		{
+           l := $1.([]*ast.StoreParameter)
+		   l = append(l,$3.(*ast.StoreParameter))
+		   $$ = l
+		}
+        | SpPdparam
+		{
+         $$ = []*ast.StoreParameter{$1.(*ast.StoreParameter)}
+		}
+        ;
+
+SpPdparam:
+        SpOptInout Identifier Type OptCollate
+        {
+           x := &ast.StoreParameter{
+			Paramstatus: $1.(int),
+			ParamType:   $3.(*types.FieldType),
+			ParamName:   $2,
+			ParamCollate: $4,
+		   }
+		   $$ = x
+        }
+        ;
+
+SpOptInout:
+          /* Empty */ { $$ = ast.MODE_IN; }
+        | "IN"      { $$ = ast.MODE_IN; }
+        | "OUT"     { $$ = ast.MODE_OUT; }
+        | "INOUT"   { $$ = ast.MODE_INOUT; }
+        ;
+
+ProcedureStatementStmt:
+	    SelectStmt
+    |	SelectStmtWithClause
+    |	SubSelect
+		{
+			var sel ast.StmtNode
+			switch x := $1.(*ast.SubqueryExpr).Query.(type) {
+			case *ast.SelectStmt:
+				x.IsInBraces = true
+				sel = x
+			case *ast.SetOprStmt:
+				x.IsInBraces = true
+				sel = x
+			}
+			$$ = sel
+		}
+	|	SetStmt
+	|	UpdateStmt
+	|	UseStmt
+	|	InsertIntoStmt
+    |	ReplaceIntoStmt
+	|	CommitStmt
+	|	RollbackStmt
+	|   ExplainStmt
+	;
+
+ProcedureUnlabeledBlock:
+	ProcedureBlockContent
+	{ $$ = $1}
+	;
+
+ProcedureDeclIdents:
+    Identifier
+    { 
+		$$ = []string{$1}
+	}
+	| ProcedureDeclIdents ',' Identifier
+	{
+		l := $1.([]string)
+		l = append(l,$3)
+		$$ = l
+	}
+	;
+
+ProcedureOptDefault:
+    /* Empty */
+    { $$ = nil }
+	| "DEFAULT"  Expression 
+	{ $$ = $2 }
+	;
+
+
+ProcedureDecl:
+    "DECLARE"                  /*$1*/
+    ProcedureDeclIdents        /*$2*/
+    Type                       /*$3*/
+    OptCollate                 /*$4*/
+    ProcedureOptDefault        /*$5*/
+	{
+		x := &ast.ProcedureDecl{
+			DeclNames: $2.([]string),
+			DeclType: $3.(*types.FieldType),
+            DeclCollate: $4,
+		}
+		if $5 != nil {
+			x.DeclDefault = $5.(ast.ExprNode)
+		}
+		x.DeclType.SetCollate($4)
+		$$ = x
+	}
+
+ProcedureDeclsOpt:
+    /* Empty */
+    { 
+		$$ = []*ast.ProcedureDecl{}
+	}
+	| ProcedureDecls 
+	{
+		$$ = $1
+	}
+
+
+
+ProcedureDecls:
+    ProcedureDecl ';'
+    { 
+		$$ = []*ast.ProcedureDecl{$1.(*ast.ProcedureDecl)}
+	}
+	| ProcedureDecls  ProcedureDecl ';'
+	{
+		l :=$1.([]*ast.ProcedureDecl)
+		l = append(l,$2.(*ast.ProcedureDecl))
+		$$ = l
+	}
+	;
+
+ProcedureProcStmts:
+    /* Empty */
+    { 
+       $$ = []ast.StmtNode{}
+	}
+	| ProcedureProcStmts ProcedureProcStmt ';'
+	{
+		l := $1.([]ast.StmtNode)
+		l = append(l,$2.(ast.StmtNode))
+		$$ = l
+	}
+
+ProcedureBlockContent:
+   "BEGIN" 
+   ProcedureDeclsOpt 
+   ProcedureProcStmts 
+   "END"
+   {
+      x := &ast.ProcedureBlock{
+		ProcedureVars:      $2.([]*ast.ProcedureDecl),
+		ProcedureProcStmts: $3.([]ast.StmtNode),
+	  }
+	  $$ = x
+
+   }
+   ;
+
+
+
+ProcedureProcStmt:
+     ProcedureStatementStmt
+	 {
+		$$ = $1
+	 }
+	| ProcedureUnlabeledBlock
+	{
+		$$ = $1
+	}
+    ;
+/********************************************************************************************
+ *
+ *  Create Procedure Statement
+ *
+ *  Example:
+ *	CREATE
+ *  [DEFINER = user]
+ *  PROCEDURE [IF NOT EXISTS] sp_name ([proc_parameter[,...]])
+ *  [characteristic ...] routine_body
+
+ *  proc_parameter:
+ *  [ IN | OUT | INOUT ] param_name type
+
+ *  func_parameter:
+ *  param_name type
+
+ *  type:
+ *  Any valid MySQL data type
+
+ * routine_body:
+ *  Valid SQL routine statement
+ ********************************************************************************************/
+ CreateProcedureStmt:
+    "CREATE" "PROCEDURE" IfNotExists TableName '(' OptSpPdparams ')'
+	ProcedureProcStmt
+	{
+        x := &ast.ProcedureInfo{
+			IfNotExists:      $3.(bool),
+			ProcedureName: $4.(*ast.TableName),
+			ProcedureParam: $6.([]*ast.StoreParameter),
+			ProcedureBody: $8,
+		}
+		$$ = x
+	}
+	;
+
+
+/********************************************************************************************
+
+*  DROP PROCEDURE  [IF EXISTS] sp_name
+
+********************************************************************************************/
+DropProcedureStmt:
+   "DROP" "PROCEDURE" IfExists TableName
+    {
+	  $$ = &ast.DropProcedureStmt{
+		IfExists:      $3.(bool),
+		ProcedureName: $4.(*ast.TableName),
+		}
+	}
+ ;
 %%

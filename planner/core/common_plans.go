@@ -1341,3 +1341,24 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 func IsAutoCommitTxn(ctx sessionctx.Context) bool {
 	return ctx.GetSessionVars().IsAutocommit() && !ctx.GetSessionVars().InTxn()
 }
+
+type CreateProcedure struct {
+	baseSchemaProducer
+	ProcedureInfo ast.StmtNode
+	is            infoschema.InfoSchema
+}
+
+type DropProcedure struct {
+	baseSchemaProducer
+	Procedure *ast.DropProcedureStmt
+	is        infoschema.InfoSchema
+}
+
+type CallStmt struct {
+	baseSchemaProducer
+	Callstmt      *ast.CallStmt
+	Is            infoschema.InfoSchema
+	OldSqlMod     string
+	ProcedureInfo *ProcedurebodyInfo
+	Plan          *ProcedurePlan
+}

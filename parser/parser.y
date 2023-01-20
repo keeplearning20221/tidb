@@ -8594,6 +8594,10 @@ SelectStmt:
 				lastEnd = yyS[yypt].offset - 1
 			} else {
 				lastEnd = len(src)
+				lastId := strings.Index(src[lastField.Offset:lastEnd], ";")
+				if lastId > 0 {
+					lastEnd = lastId + lastField.Offset
+				}
 				if src[lastEnd-1] == ';' {
 					lastEnd--
 				}

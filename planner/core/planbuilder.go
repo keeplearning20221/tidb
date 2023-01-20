@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -5142,4 +5143,281 @@ func extractPatternLikeName(patternLike *ast.PatternLikeExpr) string {
 		return v.GetString()
 	}
 	return ""
+}
+
+func (b *PlanBuilder) buildCreateProcedure(ctx context.Context, node *ast.ProcedureInfo) (Plan, error) {
+	p := &CreateProcedure{ProcedureInfo: node, is: b.is}
+	procedurceSchema := node.ProcedureName.Schema.O
+	if procedurceSchema == "" {
+		procedurceSchema = b.ctx.GetSessionVars().CurrentDB
+		node.ProcedureName.Schema = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+	}
+	if procedurceSchema == "" {
+		return nil, ErrNoDB
+	}
+	return p, nil
+}
+
+func (b *PlanBuilder) buildDropProcedure(ctx context.Context, node *ast.DropProcedureStmt) (Plan, error) {
+	p := &DropProcedure{Procedure: node, is: b.is}
+	procedurceSchema := node.ProcedureName.Schema.O
+	if procedurceSchema == "" {
+		procedurceSchema = b.ctx.GetSessionVars().CurrentDB
+		node.ProcedureName.Schema = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+	}
+	if procedurceSchema == "" {
+		return nil, ErrNoDB
+	}
+	return p, nil
+}
+
+type ProcedureBaseBody interface {
+}
+
+type ProcedureSQL struct {
+	ProcedureBaseBody
+	Stmt ast.StmtNode
+}
+type ProcedureBlock struct {
+	ProcedureBaseBody
+	Vars               []*ProcedurebodyVal
+	ProcedureProcStmts []ProcedureBaseBody
+}
+type ProcedurebodyInfo struct {
+	Procedurebody       string
+	SqlMode             string
+	CharacterSetClient  string
+	CollationConnection string
+	ShemaCollation      string
+}
+
+type ProcedurebodyVal struct {
+	DeclNames   []string
+	DeclType    *types.FieldType
+	DeclCollate string
+	DeclDefault expression.Expression
+	DeclRes     types.Datum
+}
+
+type ProcedurePlan struct {
+	IfNotExists    bool
+	ProcedureName  *ast.TableName
+	ProcedureParam []*ast.StoreParameter
+	Procedurebody  ProcedureBaseBody
+}
+
+func (b *PlanBuilder) analysiStructure(ctx context.Context, stmtNodes []ast.StmtNode) (*ProcedurePlan, error) {
+	if len(stmtNodes) > 1 {
+		return nil, errors.New("Parse procedure error")
+	}
+
+	if len(stmtNodes) == 0 {
+		return nil, nil
+	}
+	switch stmtNodes[0].(type) {
+	case *ast.ProcedureInfo:
+		plan := &ProcedurePlan{
+			IfNotExists:    stmtNodes[0].(*ast.ProcedureInfo).IfNotExists,
+			ProcedureName:  stmtNodes[0].(*ast.ProcedureInfo).ProcedureName,
+			ProcedureParam: stmtNodes[0].(*ast.ProcedureInfo).ProcedureParam,
+		}
+		body, err := b.buildCallPlan(ctx, stmtNodes[0].(*ast.ProcedureInfo))
+		if err != nil {
+			return nil, err
+		}
+		plan.Procedurebody = body
+		return plan, nil
+	default:
+		return nil, errors.Errorf("Call procedure unsupport node %v", stmtNodes)
+	}
+
+}
+
+func (b *PlanBuilder) getBodyVar(ctx context.Context, node *ast.ProcedureBlock) (vars []*ProcedurebodyVal, err error) {
+	vars = make([]*ProcedurebodyVal, 0, len(node.ProcedureVars))
+	var buf bytes.Buffer
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
+	for _, stmt := range node.ProcedureVars {
+		buf.Reset()
+		err := stmt.Restore(restoreCtx)
+		if err != nil {
+			return nil, err
+		}
+		pvar := &ProcedurebodyVal{
+			DeclNames:   stmt.DeclNames,
+			DeclType:    stmt.DeclType,
+			DeclCollate: stmt.DeclCollate,
+		}
+		res, ok := stmt.DeclDefault.(*driver.ValueExpr)
+		if ok {
+			pvar.DeclRes = res.Datum
+		}
+
+		if stmt.DeclDefault != nil {
+			expr, err := b.handleDefaults(ctx, stmt)
+			if err != nil {
+				return nil, err
+			}
+			pvar.DeclDefault = expr
+		}
+		vars = append(vars, pvar)
+	}
+	return vars, nil
+}
+
+func (b *PlanBuilder) buildProcedureNode(ctx context.Context, node ast.StmtNode) (basebody ProcedureBaseBody, err error) {
+	switch node.(type) {
+	case *ast.ProcedureBlock:
+		block := &ProcedureBlock{}
+		basebody := make([]ProcedureBaseBody, 0, len(node.(*ast.ProcedureBlock).ProcedureProcStmts))
+		vars, err := b.getBodyVar(ctx, node.(*ast.ProcedureBlock))
+		if err != nil {
+			return nil, err
+		}
+		block.Vars = vars
+		for _, stmt := range node.(*ast.ProcedureBlock).ProcedureProcStmts {
+			body, err := b.buildProcedureNode(ctx, stmt)
+			if err != nil {
+				return nil, err
+			}
+			basebody = append(basebody, body)
+		}
+		block.ProcedureProcStmts = basebody
+		return block, nil
+	default:
+		node := &ProcedureSQL{Stmt: node}
+		return node, nil
+	}
+}
+
+func (b *PlanBuilder) buildCallPlan(ctx context.Context, stmtNodes *ast.ProcedureInfo) (basebody ProcedureBaseBody, err error) {
+	switch stmtNodes.ProcedureBody.(type) {
+	case *ast.ProcedureBlock:
+		block := &ProcedureBlock{}
+		stmtbody := make([]ProcedureBaseBody, 0, len(stmtNodes.ProcedureBody.(*ast.ProcedureBlock).ProcedureProcStmts))
+		vars, err := b.getBodyVar(ctx, stmtNodes.ProcedureBody.(*ast.ProcedureBlock))
+		if err != nil {
+			return nil, err
+		}
+		block.Vars = vars
+		for _, stmt := range stmtNodes.ProcedureBody.(*ast.ProcedureBlock).ProcedureProcStmts {
+			body, err := b.buildProcedureNode(ctx, stmt)
+			if err != nil {
+				return nil, err
+			}
+			stmtbody = append(stmtbody, body)
+		}
+		block.ProcedureProcStmts = stmtbody
+		return block, nil
+	default:
+		node := &ProcedureSQL{Stmt: stmtNodes.ProcedureBody}
+		return node, nil
+	}
+}
+func (b *PlanBuilder) buildCallProcedure(ctx context.Context, node *ast.CallStmt) (Plan, error) {
+	p := &CallStmt{Callstmt: node, Is: b.is}
+	procedurceSchema := node.Procedure.Schema.O
+	if procedurceSchema == "" {
+		procedurceSchema = b.ctx.GetSessionVars().CurrentDB
+		node.Procedure.Schema = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+	}
+	if procedurceSchema == "" {
+		return nil, ErrNoDB
+	}
+	procedurceName := node.Procedure.FnName.String()
+	_, ok := b.is.SchemaByName(node.Procedure.Schema)
+	if !ok {
+		return nil, ErrBadDB.GenWithStackByArgs(procedurceSchema)
+	}
+
+	procedureInfo, err := fetchProcdureInfo(b.ctx, procedurceName, procedurceSchema)
+	if err != nil {
+		return nil, err
+	}
+	sqlModeSave, ok := b.ctx.GetSessionVars().GetSystemVar(variable.SQLModeVar)
+	if !ok {
+		return nil, errors.New("can not find sql_mode")
+	}
+	err = b.ctx.GetSessionVars().SetSystemVar(variable.SQLModeVar, procedureInfo.SqlMode)
+	if err != nil {
+		_ = b.ctx.GetSessionVars().SetSystemVar(variable.SQLModeVar, sqlModeSave)
+		return nil, err
+	}
+
+	p.OldSqlMod = sqlModeSave
+	stmtNodes, err := b.ctx.GetSessionExec().SqlParse(ctx, procedureInfo.Procedurebody)
+	if err != nil {
+		_ = b.ctx.GetSessionVars().SetSystemVar(variable.SQLModeVar, sqlModeSave)
+		return nil, err
+	}
+	plan, err := b.analysiStructure(ctx, stmtNodes)
+	if err != nil {
+		_ = b.ctx.GetSessionVars().SetSystemVar(variable.SQLModeVar, sqlModeSave)
+		return nil, err
+	}
+	p.Plan = plan
+	return p, nil
+}
+
+func (b *PlanBuilder) handleDefaults(ctx context.Context, node *ast.ProcedureDecl) (expression.Expression, error) {
+	// var totalMap map[*ast.AggregateFuncExpr]int
+
+	// p := b.buildTableDual()
+	// var selects []*ast.SelectField
+	if node != nil {
+		if _, ok := node.DeclDefault.(*ast.DefaultExpr); !ok {
+
+			mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+			var err error
+			Expr, _, err := b.rewrite(ctx, node.DeclDefault, mockTablePlan, nil, true)
+			if err != nil {
+				return nil, err
+			}
+
+			return Expr, nil
+		}
+		// selects = append(selects, &ast.SelectField{
+		// 	WildCard: nil,
+		// 	Expr:     node,
+		// 	AsName:   model.NewCIStr(""),
+		// })
+		// _, projExprs, _, err := b.buildProjection(ctx, p, nil, totalMap, nil, false, false)
+		// if err != nil {
+		// 	return nil, err
+		// }
+		// return projExprs, nil
+	}
+	return nil, nil
+}
+
+func fetchProcdureInfo(sctx sessionctx.Context, name, db string) (*ProcedurebodyInfo, error) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
+	exec, _ := sctx.(sqlexec.SQLExecutor)
+	sql := new(strings.Builder)
+	//names = []string{"Procedure", "sql_mode", "Create Procedure", "character_set_client", "collation_connection", "Database Collation"}
+	sqlexec.MustFormatSQL(sql, "select name, sql_mode ,definition_utf8,parameter_str,character_set_client, connection_collation,")
+	sqlexec.MustFormatSQL(sql, "schema_collation from %n.%n where route_schema = %?  and name = %? and type = 'PROCEDURE' ", mysql.SystemDB, mysql.Routines, db, name)
+	rs, err := exec.ExecuteInternal(ctx, sql.String())
+	if rs == nil {
+		return nil, ErrSpDoesNotExist.GenWithStackByArgs("PROCEDURE")
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var rows []chunk.Row
+	defer terror.Call(rs.Close)
+	if rows, err = sqlexec.DrainRecordSet(ctx, rs, 8); err != nil {
+		return nil, err
+	}
+	if len(rows) != 1 {
+		return nil, errors.New("Multiple stored procedures found in table " + mysql.Routines)
+	}
+	procedurebodyInfo := &ProcedurebodyInfo{}
+	procedurebodyInfo.Procedurebody = " CREATE PROCEDURE " + name + "(" + rows[0].GetString(3) + ") \n" + rows[0].GetString(2)
+	procedurebodyInfo.SqlMode = rows[0].GetSet(1).String()
+	procedurebodyInfo.CharacterSetClient = rows[0].GetString(4)
+	procedurebodyInfo.CollationConnection = rows[0].GetString(5)
+	procedurebodyInfo.ShemaCollation = rows[0].GetString(6)
+	return procedurebodyInfo, nil
 }

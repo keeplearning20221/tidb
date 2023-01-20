@@ -611,6 +611,22 @@ func (s *SessionVars) GetUserVarType(name string) (*types.FieldType, bool) {
 type HookContext interface {
 	GetStore() kv.Storage
 }
+type varList struct {
+	name    string
+	value   types.Datum
+	varType *types.FieldType
+}
+
+type inSessionvars struct {
+	// lock is for user defined variables. values and types is read/write protected.
+	lock sync.RWMutex
+	// values stores the Datum for user variables
+	values map[string]types.Datum
+	// types stores the FieldType for user variables, it cannot be inferred from values when values have not been set yet.
+	types map[string]*types.FieldType
+
+	histroyVar []*varList
+}
 
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
@@ -1342,6 +1358,8 @@ type SessionVars struct {
 
 	// in call procedure status
 	inCallProcedure bool
+
+	procedureVars inSessionvars
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
@@ -2404,6 +2422,112 @@ func (s *SessionVars) OutCallProcedure() {
 
 func (s *SessionVars) GetCallProcedure() bool {
 	return s.inCallProcedure
+}
+
+func (s *SessionVars) NewProcedureVariables() {
+	if !s.inCallProcedure {
+		return
+	}
+
+	s.procedureVars.types = make(map[string]*types.FieldType)
+	s.procedureVars.values = make(map[string]types.Datum)
+	s.procedureVars.histroyVar = make([]*varList, 0, 10)
+}
+
+func (s *SessionVars) ClearProcedureVariable() {
+	s.procedureVars.types = nil
+	s.procedureVars.values = nil
+	s.procedureVars.histroyVar = nil
+}
+
+func (s *SessionVars) NewProcedureVariable(name string, val types.Datum, fieldtype *types.FieldType) error {
+	if !s.inCallProcedure {
+		return errors.New("This function cannot be used outside a stored procedure")
+	}
+	s.procedureVars.lock.Lock()
+	defer s.procedureVars.lock.Unlock()
+	oldType, ok := s.procedureVars.types[name]
+	if ok {
+		oldvalue, ok := s.procedureVars.values[name]
+		if !ok {
+			return errors.New(name + ":variable imperfection")
+		}
+		historyValue := &varList{
+			name:    name,
+			value:   oldvalue,
+			varType: oldType,
+		}
+		s.procedureVars.histroyVar = append(s.procedureVars.histroyVar, historyValue)
+	}
+	s.procedureVars.types[name] = fieldtype
+	s.procedureVars.values[name] = val
+	return nil
+}
+
+func (s *SessionVars) GetProcedureVariable(name string) (*types.FieldType, types.Datum, bool, error) {
+	if !s.inCallProcedure {
+		return nil, types.NewDatum(""), true, nil
+	}
+	s.procedureVars.lock.Lock()
+	defer s.procedureVars.lock.Unlock()
+	varType, ok := s.procedureVars.types[name]
+	if !ok {
+		return nil, types.NewDatum(""), true, nil
+	}
+	varVar, ok := s.procedureVars.values[name]
+	if !ok {
+		err := errors.Errorf("Can not get %s var", name)
+		return nil, types.NewDatum(""), false, err
+	}
+	return varType, varVar, false, nil
+}
+
+func (s *SessionVars) CheckProcedureVariable(name string) bool {
+	if !s.inCallProcedure {
+		return false
+	}
+	s.procedureVars.lock.Lock()
+	defer s.procedureVars.lock.Unlock()
+	_, ok := s.procedureVars.types[name]
+	if !ok {
+		return false
+	}
+
+	return true
+}
+
+func (s *SessionVars) UpdateProcedureVariable(name string, datum types.Datum) {
+	if !s.inCallProcedure {
+		return
+	}
+	s.procedureVars.lock.Lock()
+	defer s.procedureVars.lock.Unlock()
+	s.procedureVars.values[name] = datum
+}
+
+func (s *SessionVars) DeleteProcedureVariable(name string, mayCover bool) error {
+	if !s.inCallProcedure {
+		return errors.New("This function cannot be used outside a stored procedure")
+	}
+	s.procedureVars.lock.Lock()
+	defer s.procedureVars.lock.Unlock()
+	delete(s.procedureVars.types, name)
+	delete(s.procedureVars.values, name)
+	if mayCover {
+		id := len(s.procedureVars.histroyVar) - 1
+		if id < 0 {
+			return nil
+		}
+		if s.procedureVars.histroyVar[id].name == name {
+			err := s.NewProcedureVariable(name, s.procedureVars.histroyVar[id].value,
+				s.procedureVars.histroyVar[id].varType)
+			if err != nil {
+				return err
+			}
+			s.procedureVars.histroyVar = s.procedureVars.histroyVar[0 : id-1]
+		}
+	}
+	return nil
 }
 
 // TableDelta stands for the changed count for one table or partition.

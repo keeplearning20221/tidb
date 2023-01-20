@@ -107,6 +107,11 @@ func (n *ProcedureDecl) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ProcedureDecl)
+	node, ok := n.DeclDefault.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.DeclDefault = node.(ExprNode)
 	return v.Leave(n)
 }
 

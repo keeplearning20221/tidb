@@ -1369,6 +1369,9 @@ type DropProcedure struct {
 
 type CallStmt struct {
 	baseSchemaProducer
-	Callstmt *ast.CallStmt
-	is       infoschema.InfoSchema
+	Callstmt      *ast.CallStmt
+	Is            infoschema.InfoSchema
+	OldSqlMod     string
+	ProcedureInfo *ProcedurebodyInfo
+	Plan          *ProcedurePlan
 }

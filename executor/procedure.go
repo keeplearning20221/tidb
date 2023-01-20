@@ -17,10 +17,10 @@ package executor
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/format"
@@ -29,23 +29,19 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-type procedurebodyInfo struct {
-	procedurebody       string
-	sqlMode             string
-	characterSetClient  string
-	collationConnection string
-	shemaCollation      string
-}
-
 type ProcedureExec struct {
 	baseExecutor
-	done      bool
-	is        infoschema.InfoSchema
-	Statement ast.StmtNode
+	done          bool
+	is            infoschema.InfoSchema
+	Statement     ast.StmtNode
+	oldSqlMod     string
+	procedureInfo *plannercore.ProcedurebodyInfo
+	Plan          *plannercore.ProcedurePlan
 }
 
 func (b *executorBuilder) buildCreateProcedure(v *plannercore.CreateProcedure) Executor {
@@ -114,7 +110,7 @@ func procedureExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecuto
 	return rows > 0, err
 }
 
-func getProcedureinfo(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, db string) (*procedurebodyInfo, error) {
+func getProcedureinfo(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, db string) (*plannercore.ProcedurebodyInfo, error) {
 	sql := new(strings.Builder)
 	//names = []string{"Procedure", "sql_mode", "Create Procedure", "character_set_client", "collation_connection", "Database Collation"}
 	sqlexec.MustFormatSQL(sql, "select name, sql_mode ,definition_utf8,parameter_str,character_set_client, connection_collation,")
@@ -135,16 +131,21 @@ func getProcedureinfo(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name
 	if len(rows) != 1 {
 		return nil, errors.New("Multiple stored procedures found in table " + mysql.Routines)
 	}
-	procedurebodyInfo := &procedurebodyInfo{}
-	procedurebodyInfo.procedurebody = " CREATE PROCEDURE " + name + "(" + rows[0].GetString(3) + ") \n" + rows[0].GetString(2)
-	procedurebodyInfo.sqlMode = rows[0].GetSet(1).String()
-	procedurebodyInfo.characterSetClient = rows[0].GetString(4)
-	procedurebodyInfo.collationConnection = rows[0].GetString(5)
-	procedurebodyInfo.shemaCollation = rows[0].GetString(6)
+	procedurebodyInfo := &plannercore.ProcedurebodyInfo{}
+	procedurebodyInfo.Procedurebody = " CREATE PROCEDURE " + name + "(" + rows[0].GetString(3) + ") \n" + rows[0].GetString(2)
+	procedurebodyInfo.SqlMode = rows[0].GetSet(1).String()
+	procedurebodyInfo.CharacterSetClient = rows[0].GetString(4)
+	procedurebodyInfo.CollationConnection = rows[0].GetString(5)
+	procedurebodyInfo.ShemaCollation = rows[0].GetString(6)
 	return procedurebodyInfo, nil
 }
 
 func (e *ProcedureExec) CreateProcedure(ctx context.Context, s *ast.ProcedureInfo) error {
+	e.ctx.GetSessionVars().SetInCallProcedure()
+	defer e.ctx.GetSessionVars().OutCallProcedure()
+	e.ctx.GetSessionVars().NewProcedureVariables()
+	defer e.ctx.GetSessionVars().ClearProcedureVariable()
+
 	procedurceName := s.ProcedureName.Name.L
 	procedurceSchema := s.ProcedureName.Schema
 	dbInfo, ok := e.is.SchemaByName(procedurceSchema)
@@ -236,8 +237,8 @@ func (e *ShowExec) fetchShowCreateProcdure(ctx context.Context) error {
 		return err
 	}
 	//names = []string{"Procedure", "sql_mode", "Create Procedure", "character_set_client", "collation_connection", "Database Collation"}
-	e.appendRow([]interface{}{e.Procedure.Name.O, procedureInfo.sqlMode, procedureInfo.procedurebody, procedureInfo.characterSetClient,
-		procedureInfo.collationConnection, procedureInfo.shemaCollation})
+	e.appendRow([]interface{}{e.Procedure.Name.O, procedureInfo.SqlMode, procedureInfo.Procedurebody, procedureInfo.CharacterSetClient,
+		procedureInfo.CollationConnection, procedureInfo.ShemaCollation})
 	e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	return nil
 }
@@ -287,46 +288,123 @@ func (b *executorBuilder) buildCallProcedure(v *plannercore.CallStmt) Executor {
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
 	base.initCap = chunk.ZeroCapacity
 	e := &ProcedureExec{
-		baseExecutor: base,
-		Statement:    v.Callstmt,
-		is:           b.is,
-		done:         false,
+		baseExecutor:  base,
+		Statement:     v.Callstmt,
+		is:            b.is,
+		done:          false,
+		oldSqlMod:     v.OldSqlMod,
+		procedureInfo: v.ProcedureInfo,
+		Plan:          v.Plan,
 	}
 	return e
 }
 
-func parseNode(node ast.StmtNode, nodes []ast.StmtNode) ([]ast.StmtNode, error) {
-	var err error
+func (e *ProcedureExec) parseNode(ctx context.Context, node plannercore.ProcedureBaseBody) (err error) {
+	var nameList []string
 	switch node.(type) {
-	case *ast.ProcedureBlock:
-		nodes, err = parseNode(node, nodes)
-		if err != nil {
-			return nil, err
-		}
-	default:
-
-		nodes = append(nodes, node)
-	}
-	return nodes, nil
-}
-func getSQLList(node *ast.ProcedureInfo) ([]ast.StmtNode, error) {
-	var nodes []ast.StmtNode
-	var err error
-	switch node.ProcedureBody.(type) {
-	case *ast.ProcedureBlock:
-		for _, stmt := range node.ProcedureBody.(*ast.ProcedureBlock).ProcedureProcStmts {
-			nodes, err = parseNode(stmt, nodes)
+	case *plannercore.ProcedureBlock:
+		for _, pvar := range node.(*plannercore.ProcedureBlock).Vars {
+			names, err := e.createVariable(ctx, pvar)
 			if err != nil {
-				return nil, err
+				return err
+			}
+			nameList = append(nameList, names...)
+		}
+		defer func() {
+			for _, name := range nameList {
+				err = e.ctx.GetSessionVars().DeleteProcedureVariable(name, true)
+			}
+		}()
+		for _, stmt := range node.(*plannercore.ProcedureBlock).ProcedureProcStmts {
+			err = e.parseNode(ctx, stmt)
+			if err != nil {
+				return err
 			}
 		}
+
+	case *plannercore.ProcedureSQL:
+		err := e.execNode(ctx, node.(*plannercore.ProcedureSQL).Stmt)
+		if err != nil {
+			return err
+		}
 	default:
-		nodes, err = parseNode(node.ProcedureBody, nodes)
+		return errors.Errorf("Call procedure unsupport node %v", node)
+	}
+	return nil
+}
+
+func (e *ProcedureExec) getDarumVar(sqlType *types.FieldType, defaultVar expression.Expression) (*types.Datum, error) {
+	var datum types.Datum
+	var err error
+	if defaultVar == nil {
+		datum = types.NewDatum("")
+	} else {
+		datum, err = defaultVar.Eval(chunk.Row{})
 		if err != nil {
 			return nil, err
 		}
 	}
-	return nodes, nil
+
+	newdatum, err := datum.Clone().ConvertTo(e.ctx.GetSessionVars().StmtCtx, sqlType)
+	if err != nil {
+		return nil, err
+	}
+	return &newdatum, nil
+}
+
+func (e *ProcedureExec) createVariable(ctx context.Context, pval *plannercore.ProcedurebodyVal) ([]string, error) {
+	datum, err := e.getDarumVar(pval.DeclType, pval.DeclDefault)
+	if err != nil {
+		return nil, err
+	}
+	for _, name := range pval.DeclNames {
+		err = e.ctx.GetSessionVars().NewProcedureVariable(name, *datum, pval.DeclType)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return pval.DeclNames, nil
+}
+
+func (e *ProcedureExec) realizeFunction(ctx context.Context, node *plannercore.ProcedureBlock) (err error) {
+	var nameList []string
+	for _, pvar := range node.Vars {
+		names, err := e.createVariable(ctx, pvar)
+		if err != nil {
+			return err
+		}
+		nameList = append(nameList, names...)
+	}
+	defer func() {
+		for _, name := range nameList {
+			err = e.ctx.GetSessionVars().DeleteProcedureVariable(name, true)
+		}
+	}()
+	for _, stmt := range node.ProcedureProcStmts {
+		err := e.parseNode(ctx, stmt)
+		if err != nil {
+			return err
+		}
+	}
+	// switch node.ProcedureBody.(type) {
+	// case *ast.ProcedureBlock:
+	// 	for _, stmt := range node.ProcedureBody.(*ast.ProcedureBlock).ProcedureVars {
+	// 		fmt.Print(stmt)
+	// 	}
+
+	// 	for _, stmt := range node.ProcedureBody.(*ast.ProcedureBlock).ProcedureProcStmts {
+	// 		err = e.parseNode(ctx, stmt)
+	// 		if err != nil {
+	// 			return err
+	// 		}
+	// 	}
+	// default:
+	// 	err = e.parseNode(ctx, node.ProcedureBody)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// }
+	return nil
 }
 
 func (e *ProcedureExec) execWithResult(ctx context.Context, node ast.StmtNode) error {
@@ -345,28 +423,34 @@ func (e *ProcedureExec) execDefalutStmt(ctx context.Context, node ast.StmtNode) 
 	return nil
 }
 
+func (e *ProcedureExec) execNode(ctx context.Context, node ast.StmtNode) error {
+	switch node.(type) {
+	case *ast.SelectStmt:
+		err := e.execWithResult(ctx, node)
+		if err != nil {
+			return err
+		}
+
+	case *ast.ExplainStmt:
+		err := e.execWithResult(ctx, node)
+		if err != nil {
+			return err
+		}
+		// TODO: add logic and data
+	default:
+		err := e.execDefalutStmt(ctx, node)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (e *ProcedureExec) CallProcedure(ctx context.Context, s *ast.CallStmt) error {
-	procedurceName := s.Procedure.FnName.String()
-	procedurceSchema := s.Procedure.Schema
-	_, ok := e.is.SchemaByName(procedurceSchema)
-	if !ok {
-		return ErrBadDB.GenWithStackByArgs(procedurceSchema)
-	}
+	defer func() {
+		_ = e.ctx.GetSessionVars().SetSystemVar(variable.SQLModeVar, e.oldSqlMod)
+	}()
 
-	sysSession, err := e.getSysSession()
-	if err != nil {
-		return err
-	}
-	defer e.releaseSysSession(ctx, sysSession)
-	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
-	procedureInfo, err := getProcedureinfo(ctx, sqlExecutor, procedurceName, procedurceSchema.String())
-	if err != nil {
-		return err
-	}
-
-	sqlModeSave := variable.GetSysVar(variable.SQLModeVar)
-	defer variable.SetSysVar(variable.SQLModeVar, sqlModeSave.Value)
-	variable.SetSysVar(variable.SQLModeVar, procedureInfo.sqlMode)
 	mutliStateModeSave := variable.GetSysVar(variable.TiDBMultiStatementMode)
 	defer variable.SetSysVar(variable.TiDBMultiStatementMode, mutliStateModeSave.Value)
 	variable.SetSysVar(variable.TiDBMultiStatementMode, "ON")
@@ -375,60 +459,24 @@ func (e *ProcedureExec) CallProcedure(ctx context.Context, s *ast.CallStmt) erro
 		e.ctx.GetSessionVars().ClientCapability = clientCapabilitySave
 	}()
 	e.ctx.GetSessionVars().ClientCapability = (e.ctx.GetSessionVars().ClientCapability | mysql.ClientMultiStatements)
-	stmtNodes, err := e.ctx.GetSessionExec().SqlParse(ctx, procedureInfo.procedurebody)
-	if err != nil {
-		return err
-	}
-	var nodes []ast.StmtNode
-	if len(stmtNodes) > 1 {
-		return errors.New("Parse procedure error")
-	}
-
-	if len(stmtNodes) == 0 {
-		return nil
-	}
-	switch stmtNodes[0].(type) {
-	case *ast.ProcedureInfo:
-		nodes, err = getSQLList(stmtNodes[0].(*ast.ProcedureInfo))
+	e.ctx.GetSessionVars().SetInCallProcedure()
+	defer e.ctx.GetSessionVars().OutCallProcedure()
+	e.ctx.GetSessionVars().NewProcedureVariables()
+	defer e.ctx.GetSessionVars().ClearProcedureVariable()
+	switch e.Plan.Procedurebody.(type) {
+	case *plannercore.ProcedureBlock:
+		err := e.realizeFunction(ctx, e.Plan.Procedurebody.(*plannercore.ProcedureBlock))
 		if err != nil {
 			return err
 		}
 	default:
-		return errors.Errorf("Call procedure unsupport node %v", stmtNodes)
+		return errors.Errorf("Call procedure unsupport node %v", e.Plan.Procedurebody)
 	}
 
 	// todo : procedure param and variables
-	// rows, _, err := e.ctx.exec(ctx, nil, "select database();")
+	// _, err = e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "select database(")
 	// if err != nil {
 	// 	return err
 	// }
-	// l := rows[0].GetString(0)
-	// fmt.Printf(l)
-
-	for _, node := range nodes {
-		switch node.(type) {
-		case *ast.SelectStmt:
-
-			err = e.execWithResult(ctx, node)
-			if err != nil {
-				return err
-			}
-
-		case *ast.ExplainStmt:
-			err = e.execWithResult(ctx, node)
-			if err != nil {
-				return err
-			}
-			// TODO: add logic and data
-		default:
-			err = e.execDefalutStmt(ctx, node)
-			if err != nil {
-				return err
-			}
-		}
-
-	}
-	fmt.Print(nodes)
-
 	return nil
 }

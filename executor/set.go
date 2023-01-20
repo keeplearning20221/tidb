@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table/temptable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
@@ -104,6 +105,13 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expression.VarAssignment) error {
+	notFind,err := e.setSPVariable(name,v)
+	if err != nil {
+		return err
+	}
+	if !notFind {
+		return nil
+	}
 	sessionVars := e.ctx.GetSessionVars()
 	sysVar := variable.GetSysVar(name)
 	if sysVar == nil {
@@ -307,4 +315,33 @@ func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string, snapshotTS uin
 
 	vars.SnapshotInfoschema = temptable.AttachLocalTemporaryTableInfoSchema(e.ctx, snapInfo)
 	return nil
+}
+
+func (e *SetExecutor) setSPVariable(name string, v *expression.VarAssignment) (bool, error) {
+	if !e.ctx.GetSessionVars().GetCallProcedure() {
+		return true, nil
+	}
+	varType, _, notFind, err := e.ctx.GetSessionVars().GetProcedureVariable(name)
+	if err != nil {
+		return false, err
+	}
+	if notFind {
+		return true, nil
+	}
+	datum, err := e.getSPVarValue(v, varType)
+	if err != nil {
+		return false, err
+	}
+	e.ctx.GetSessionVars().UpdateProcedureVariable(name, datum)
+	return false, nil
+}
+
+func (e *SetExecutor) getSPVarValue(v *expression.VarAssignment, tp *types.FieldType) (types.Datum, error) {
+	nativeVal, err := v.Expr.Eval(chunk.Row{})
+	if err != nil || nativeVal.IsNull() {
+		return types.NewDatum(""), err
+	}
+
+	varVar, err := nativeVal.Clone().ConvertTo(e.ctx.GetSessionVars().StmtCtx, tp)
+	return varVar, err
 }

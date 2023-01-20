@@ -1301,6 +1301,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	}
 
 	if er.err != nil {
+		retNode = er.spVariablesRewrite(retNode)
 		return retNode, false
 	}
 	return originInNode, true
@@ -1997,6 +1998,14 @@ func (er *expressionRewriter) toTable(v *ast.TableName) {
 }
 
 func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
+	notFind, err := er.searchSpVariables(v.Name.String())
+	if err != nil {
+		er.err = err
+		return
+	}
+	if !notFind {
+		return
+	}
 	idx, err := expression.FindFieldName(er.names, v)
 	if err != nil {
 		er.err = ErrAmbiguous.GenWithStackByArgs(v.Name, clauseMsg[fieldList])
@@ -2385,3 +2394,86 @@ func datumToJSONObject(d *types.Datum) (interface{}, error) {
 	}
 	return d.ToString()
 }
+
+func (er *expressionRewriter) searchSpVariables(name string) (bool, error) {
+	if !er.sctx.GetSessionVars().GetCallProcedure() {
+		return true, nil
+	}
+	varType, varVar, notFind, err := er.sctx.GetSessionVars().GetProcedureVariable(name)
+	if err != nil {
+		return false, err
+	}
+	if notFind {
+		return true, nil
+	}
+	retType := varType.Clone()
+	switch varVar.Kind() {
+	case types.KindNull:
+		retType.DelFlag(mysql.NotNullFlag)
+	default:
+		retType.AddFlag(mysql.NotNullFlag)
+	}
+	varVar.SetValue(varVar.GetValue(), retType)
+	value := &expression.Constant{Value: varVar, RetType: retType}
+	value.SetRepertoire(expression.ASCII)
+	if retType.EvalType() == types.ETString {
+		for _, b := range varVar.GetBytes() {
+			// if any character in constant is not ascii, set the repertoire to UNICODE.
+			if b >= 0x80 {
+				value.SetRepertoire(expression.UNICODE)
+				break
+			}
+		}
+	}
+	er.ctxStackAppend(value, types.EmptyName)
+	return false, nil
+}
+
+func (er *expressionRewriter) spVariablesRewrite(v ast.Node) ast.Node {
+	if !er.sctx.GetSessionVars().GetCallProcedure() {
+		return v
+	}
+	columnName, ok := v.(*ast.ColumnName)
+	if !ok {
+		return v
+	}
+	if !er.sctx.GetSessionVars().CheckProcedureVariable(columnName.Name.String()) {
+		return v
+	}
+	v = &ast.VariableExpr{
+		Name:     columnName.Name.String(),
+		IsGlobal: false,
+		IsSystem: false,
+	}
+	v.SetText(nil, columnName.Name.String())
+	return v
+}
+
+// func (er *expressionRewriter) rewriteSPVariable(v *ast.VariableExpr) (bool, error) {
+// 	sessionVars := er.sctx.GetSessionVars()
+// 	tp, _, isNotFind, err := sessionVars.GetProcedureVariable(v.Name)
+// 	if err != nil {
+// 		return false, err
+// 	}
+// 	if isNotFind {
+// 		return true, nil
+// 	}
+// 	tp = tp.Clone()
+// 	stkLen := len(er.ctxStack)
+// 	if v.Value != nil {
+// 		tp := er.ctxStack[stkLen-1].GetType()
+// 		er.ctxStack[stkLen-1], er.err = er.newFunction(ast.SetVar, tp,
+// 			expression.DatumToConstant(types.NewDatum(v.Name), er.ctxStack[stkLen-1].GetType().GetType(), 0),
+// 			er.ctxStack[stkLen-1])
+// 		er.ctxNameStk[stkLen-1] = types.EmptyName
+// 		return false ,nil
+// 	}
+// 	f, err := er.newFunction(ast.GetVar, tp, expression.DatumToConstant(types.NewStringDatum(v.Name), tp.GetType(), 0))
+// 	if err != nil {
+// 		er.err = err
+// 		return false ,err
+// 	}
+// 	f.SetCoercibility(expression.CoercibilityImplicit)
+// 	er.ctxStackAppend(f, types.EmptyName)
+// 	return false ,nil
+// }

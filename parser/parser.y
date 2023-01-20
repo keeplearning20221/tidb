@@ -8687,8 +8687,9 @@ SelectStmt:
 				lastEnd = yyS[yypt].offset - 1
 			} else {
 				lastEnd = len(src)
-				if lastEnd > 7 && src[lastEnd-7:lastEnd] == ";  END;" {
-					lastEnd = lastEnd - 7
+				lastId := strings.Index(src[lastField.Offset:lastEnd],";")
+                if lastId > 0 {
+					lastEnd = lastId + lastField.Offset
 				}
 				if src[lastEnd-1] == ';' {
 					lastEnd--

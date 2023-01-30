@@ -53,6 +53,7 @@ import (
 	identifier  "identifier"
 	asof        "AS OF"
 	toTimestamp "TO TIMESTAMP"
+	memberof    "MEMBER OF"
 
 	/*yy:token "_%c"    */
 	underscoreCS "UNDERSCORE_CHARSET"
@@ -77,6 +78,7 @@ import (
 	alter             "ALTER"
 	analyze           "ANALYZE"
 	and               "AND"
+	array             "ARRAY"
 	as                "AS"
 	asc               "ASC"
 	between           "BETWEEN"
@@ -461,6 +463,7 @@ import (
 	maxUpdatesPerHour     "MAX_UPDATES_PER_HOUR"
 	maxUserConnections    "MAX_USER_CONNECTIONS"
 	mb                    "MB"
+	member                "MEMBER"
 	memory                "MEMORY"
 	merge                 "MERGE"
 	microsecond           "MICROSECOND"
@@ -535,6 +538,7 @@ import (
 	replicas              "REPLICAS"
 	replication           "REPLICATION"
 	required              "REQUIRED"
+	resource              "RESOURCE"
 	respect               "RESPECT"
 	restart               "RESTART"
 	restore               "RESTORE"
@@ -728,6 +732,10 @@ import (
 	voter                 "VOTER"
 	voterConstraints      "VOTER_CONSTRAINTS"
 	voters                "VOTERS"
+	rruRate               "RRU_PER_SEC"
+	wruRate               "WRU_PER_SEC"
+	ioReadBandwidth       "IO_READ_BANDWIDTH"
+	ioWriteBandwidth      "IO_WRITE_BANDWIDTH"
 
 	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
 	admin                      "ADMIN"
@@ -874,6 +882,7 @@ import (
 	AlterImportStmt            "ALTER IMPORT statement"
 	AlterInstanceStmt          "Alter instance statement"
 	AlterPolicyStmt            "Alter Placement Policy statement"
+	AlterResourceGroupStmt     "Alter Resource Group statement"
 	AlterSequenceStmt          "Alter sequence statement"
 	AnalyzeTableStmt           "Analyze table statement"
 	BeginTransactionStmt       "BEGIN TRANSACTION statement"
@@ -890,6 +899,7 @@ import (
 	CreateBindingStmt          "CREATE BINDING  statement"
 	CreatePolicyStmt           "CREATE PLACEMENT POLICY statement"
 	CreateProcedureStmt        "CREATE PROCEDURE statement"
+	CreateResourceGroupStmt    "CREATE RESOURCE GROUP statement"
 	CreateSequenceStmt         "CREATE SEQUENCE statement"
 	CreateStatisticsStmt       "CREATE STATISTICS statement"
 	DoStmt                     "Do statement"
@@ -988,6 +998,7 @@ import (
 	AlterTableSpecListOpt                  "Alter table specification list optional"
 	AlterSequenceOption                    "Alter sequence option"
 	AlterSequenceOptionList                "Alter sequence option list"
+	ArrayKwdOpt                            "Array options"
 	AnalyzeOption                          "Analyze option"
 	AnalyzeOptionList                      "Analyze option list"
 	AnalyzeOptionListOpt                   "Optional analyze option list"
@@ -1168,6 +1179,7 @@ import (
 	ReorganizePartitionRuleOpt             "optional reorganize partition partition list and definitions"
 	RequireList                            "require list for tls options"
 	RequireListElement                     "require list element for tls option"
+	ResourceGroupNameOption                "resource group name for user"
 	Rolename                               "Rolename"
 	RolenameComposed                       "Rolename that composed with more than 1 symbol"
 	RolenameList                           "RolenameList"
@@ -1361,6 +1373,8 @@ import (
 	PlacementPolicyOption                  "Anonymous or placement policy option"
 	DirectPlacementOption                  "Subset of anonymous or direct placement option"
 	PlacementOptionList                    "Anomymous or direct placement option list"
+	DirectResourceGroupOption              "Subset of anonymous or direct resource group option"
+	ResourceGroupOptionList                "Anomymous or direct resource group option list"
 	AttributesOpt                          "Attributes options"
 	AllColumnsOrPredicateColumnsOpt        "all columns or predicate columns option"
 	StatsOptionsOpt                        "Stats options"
@@ -1436,6 +1450,7 @@ import (
 	ColumnFormat                    "Column format"
 	DBName                          "Database Name"
 	PolicyName                      "Placement Policy Name"
+	ResourceGroupName               "Resource Group Name"
 	ExplainFormatType               "explain format type"
 	FieldAsName                     "Field alias name"
 	FieldAsNameOpt                  "Field alias name opt"
@@ -1588,6 +1603,42 @@ AlterTableStmt:
 			PartitionNames: $7.([]model.CIStr),
 			ReplicaKind:    ast.CompactReplicaKindTiFlash,
 		}
+	}
+
+ResourceGroupOptionList:
+	DirectResourceGroupOption
+	{
+		$$ = []*ast.ResourceGroupOption{$1.(*ast.ResourceGroupOption)}
+	}
+|	ResourceGroupOptionList DirectResourceGroupOption
+	{
+		$$ = append($1.([]*ast.ResourceGroupOption), $2.(*ast.ResourceGroupOption))
+	}
+|	ResourceGroupOptionList ',' DirectResourceGroupOption
+	{
+		$$ = append($1.([]*ast.ResourceGroupOption), $3.(*ast.ResourceGroupOption))
+	}
+
+DirectResourceGroupOption:
+	"RRU_PER_SEC" EqOpt stringLit
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRRURate, StrValue: $3}
+	}
+|	"WRU_PER_SEC" EqOpt stringLit
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceWRURate, StrValue: $3}
+	}
+|	"CPU" EqOpt stringLit
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitCPU, StrValue: $3}
+	}
+|	"IO_READ_BANDWIDTH" EqOpt stringLit
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOReadRate, StrValue: $3}
+	}
+|	"IO_WRITE_BANDWIDTH" EqOpt stringLit
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOWriteRate, StrValue: $3}
 	}
 
 PlacementOptionList:
@@ -3886,6 +3937,9 @@ DBName:
 PolicyName:
 	Identifier
 
+ResourceGroupName:
+	Identifier
+
 DatabaseOption:
 	DefaultKwdOpt CharsetKw EqOpt CharsetName
 	{
@@ -5783,6 +5837,10 @@ PredicateExpr:
 	{
 		$$ = &ast.PatternRegexpExpr{Expr: $1, Pattern: $3, Not: !$2.(bool)}
 	}
+|	BitExpr memberof '(' SimpleExpr ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.JSONMemberOf), Args: []ast.ExprNode{$1, $4}}
+	}
 |	BitExpr
 
 RegexpSym:
@@ -6167,6 +6225,7 @@ UnReservedKeyword:
 |	"REBUILD"
 |	"REDUNDANT"
 |	"REORGANIZE"
+|	"RESOURCE"
 |	"RESTART"
 |	"ROLE"
 |	"ROLLBACK"
@@ -6301,6 +6360,7 @@ UnReservedKeyword:
 |	"ACCOUNT"
 |	"INCREMENTAL"
 |	"CPU"
+|	"MEMBER"
 |	"MEMORY"
 |	"BLOCK"
 |	"IO"
@@ -6564,6 +6624,10 @@ NotKeywordToken:
 |	"LEARNER_CONSTRAINTS"
 |	"VOTER_CONSTRAINTS"
 |	"TIDB_JSON"
+|	"IO_READ_BANDWIDTH"
+|	"IO_WRITE_BANDWIDTH"
+|	"RRU_PER_SEC"
+|	"WRU_PER_SEC"
 
 /************************************************************************************
  *
@@ -7206,7 +7270,7 @@ SimpleExpr:
 			FunctionType: ast.CastBinaryOperator,
 		}
 	}
-|	builtinCast '(' Expression "AS" CastType ')'
+|	builtinCast '(' Expression "AS" CastType ArrayKwdOpt ')'
 	{
 		/* See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_cast */
 		tp := $5.(*types.FieldType)
@@ -7217,6 +7281,7 @@ SimpleExpr:
 		if tp.GetDecimal() == types.UnspecifiedLength {
 			tp.SetDecimal(defaultDecimal)
 		}
+		tp.SetArray($6.(bool))
 		explicitCharset := parser.explicitCharset
 		parser.explicitCharset = false
 		$$ = &ast.FuncCastExpr{
@@ -7284,6 +7349,15 @@ SimpleExpr:
 		expr := ast.NewValueExpr($3, parser.charset, parser.collation)
 		extract := &ast.FuncCallExpr{FnName: model.NewCIStr(ast.JSONExtract), Args: []ast.ExprNode{$1, expr}}
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.JSONUnquote), Args: []ast.ExprNode{extract}}
+	}
+
+ArrayKwdOpt:
+	{
+		$$ = false
+	}
+|	"ARRAY"
+	{
+		$$ = true
 	}
 
 DistinctKwd:
@@ -10835,6 +10909,13 @@ ShowStmt:
 	{
 		$$ = $4.(*ast.ShowStmt)
 	}
+|	"SHOW" "CREATE" "PROCEDURE" TableName
+	{
+		$$ = &ast.ShowStmt{
+			Tp:        ast.ShowCreateProcedure,
+			Procedure: $4.(*ast.TableName),
+		}
+	}
 
 ShowPlacementTarget:
 	DatabaseSym DBName
@@ -11391,6 +11472,7 @@ Statement:
 |	AlterInstanceStmt
 |	AlterSequenceStmt
 |	AlterPolicyStmt
+|	AlterResourceGroupStmt
 |	AnalyzeTableStmt
 |	BeginTransactionStmt
 |	BinlogStmt
@@ -11411,12 +11493,13 @@ Statement:
 |	CreateBindingStmt
 |	CreatePolicyStmt
 |	CreateProcedureStmt
+|	CreateResourceGroupStmt
 |	CreateSequenceStmt
 |	CreateStatisticsStmt
 |	DoStmt
 |	DropDatabaseStmt
 |	DropImportStmt
-|	DropIndexStmCreateProcedureStmtt
+|	DropIndexStmt
 |	DropTableStmt
 |	DropProcedureStmt
 |	DropPolicyStmt
@@ -12701,7 +12784,7 @@ CommaOpt:
  *  https://dev.mysql.com/doc/refman/5.7/en/account-management-sql.html
  ************************************************************************************/
 CreateUserStmt:
-	"CREATE" "USER" IfNotExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption
+	"CREATE" "USER" IfNotExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption ResourceGroupNameOption
 	{
 		// See https://dev.mysql.com/doc/refman/8.0/en/create-user.html
 		ret := &ast.CreateUserStmt{
@@ -12714,6 +12797,9 @@ CreateUserStmt:
 		}
 		if $8 != nil {
 			ret.CommentOrAttributeOption = $8.(*ast.CommentOrAttributeOption)
+		}
+		if $9 != nil {
+			ret.ResourceGroupNameOption = $9.(*ast.ResourceGroupNameOption)
 		}
 		$$ = ret
 	}
@@ -12731,7 +12817,7 @@ CreateRoleStmt:
 
 /* See http://dev.mysql.com/doc/refman/8.0/en/alter-user.html */
 AlterUserStmt:
-	"ALTER" "USER" IfExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption
+	"ALTER" "USER" IfExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption ResourceGroupNameOption
 	{
 		ret := &ast.AlterUserStmt{
 			IfExists:              $3.(bool),
@@ -12742,6 +12828,9 @@ AlterUserStmt:
 		}
 		if $8 != nil {
 			ret.CommentOrAttributeOption = $8.(*ast.CommentOrAttributeOption)
+		}
+		if $9 != nil {
+			ret.ResourceGroupNameOption = $9.(*ast.ResourceGroupNameOption)
 		}
 		$$ = ret
 	}
@@ -12954,6 +13043,15 @@ CommentOrAttributeOption:
 |	"ATTRIBUTE" stringLit
 	{
 		$$ = &ast.CommentOrAttributeOption{Type: ast.UserAttributeType, Value: $2}
+	}
+
+ResourceGroupNameOption:
+	{
+		$$ = nil
+	}
+|	"RESOURCE" "GROUP" stringLit
+	{
+		$$ = &ast.ResourceGroupNameOption{Type: ast.UserResourceGroupName, Value: $3}
 	}
 
 PasswordOrLockOptions:
@@ -13276,6 +13374,15 @@ SetBindingStmt:
 			BindingStatusType: $3.(ast.BindingStatusType),
 			OriginNode:        originStmt,
 			HintedNode:        hintedStmt,
+		}
+
+		$$ = x
+	}
+|	"SET" "BINDING" BindingStatusType "FOR" "SQL" "DIGEST" stringLit
+	{
+		x := &ast.SetBindingStmt{
+			BindingStatusType: $3.(ast.BindingStatusType),
+			SQLDigest:         $7,
 		}
 
 		$$ = x
@@ -14083,6 +14190,35 @@ DropPolicyStmt:
 		}
 	}
 
+CreateResourceGroupStmt:
+	"CREATE" "RESOURCE" "GROUP" IfNotExists ResourceGroupName ResourceGroupOptionList
+	{
+		$$ = &ast.CreateResourceGroupStmt{
+			IfNotExists:             $4.(bool),
+			ResourceGroupName:       model.NewCIStr($5),
+			ResourceGroupOptionList: $6.([]*ast.ResourceGroupOption),
+		}
+	}
+
+AlterResourceGroupStmt:
+	"ALTER" "RESOURCE" "GROUP" IfExists ResourceGroupName ResourceGroupOptionList
+	{
+		$$ = &ast.AlterResourceGroupStmt{
+			IfExists:                $4.(bool),
+			ResourceGroupName:       model.NewCIStr($5),
+			ResourceGroupOptionList: $6.([]*ast.ResourceGroupOption),
+		}
+	}
+
+DropPolicyStmt:
+	"DROP" "RESOURCE" "GROUP" IfExists PolicyName
+	{
+		$$ = &ast.DropResourceGroupStmt{
+			IfExists:          $4.(bool),
+			ResourceGroupName: model.NewCIStr($5),
+		}
+	}
+
 CreatePolicyStmt:
 	"CREATE" OrReplace "PLACEMENT" "POLICY" IfNotExists PolicyName PlacementOptionList
 	{
@@ -14541,232 +14677,4 @@ OptSpPdparams:
 	{
 		$$ = []*ast.StoreParameter{}
 	}
-|	SpPdparams
-	{
-		$$ = $1
-	}
-
-SpPdparams:
-	SpPdparams ',' SpPdparam
-	{
-		l := $1.([]*ast.StoreParameter)
-		l = append(l, $3.(*ast.StoreParameter))
-		$$ = l
-	}
-|	SpPdparam
-	{
-		$$ = []*ast.StoreParameter{$1.(*ast.StoreParameter)}
-	}
-
-SpPdparam:
-	SpOptInout Identifier Type OptCollate
-	{
-		x := &ast.StoreParameter{
-			Paramstatus:  $1.(int),
-			ParamType:    $3.(*types.FieldType),
-			ParamName:    $2,
-			ParamCollate: $4,
-		}
-		$$ = x
-	}
-
-SpOptInout:
-	/* Empty */
-	{
-		$$ = ast.MODE_IN
-	}
-|	"IN"
-	{
-		$$ = ast.MODE_IN
-	}
-|	"OUT"
-	{
-		$$ = ast.MODE_OUT
-	}
-|	"INOUT"
-	{
-		$$ = ast.MODE_INOUT
-	}
-
-ProcedureStatementStmt:
-	SelectStmt
-|	SelectStmtWithClause
-|	SubSelect
-	{
-		var sel ast.StmtNode
-		switch x := $1.(*ast.SubqueryExpr).Query.(type) {
-		case *ast.SelectStmt:
-			x.IsInBraces = true
-			sel = x
-		case *ast.SetOprStmt:
-			x.IsInBraces = true
-			sel = x
-		}
-		$$ = sel
-	}
-|	SetStmt
-|	UpdateStmt
-|	UseStmt
-|	InsertIntoStmt
-|	ReplaceIntoStmt
-|	CommitStmt
-|	RollbackStmt
-|	ExplainStmt
-|	SetOprStmt
-
-ProcedureUnlabeledBlock:
-	ProcedureBlockContent
-	{
-		$$ = $1
-	}
-
-ProcedureDeclIdents:
-	Identifier
-	{
-		$$ = []string{$1}
-	}
-|	ProcedureDeclIdents ',' Identifier
-	{
-		l := $1.([]string)
-		l = append(l, $3)
-		$$ = l
-	}
-
-ProcedureOptDefault:
-	/* Empty */
-	{
-		$$ = nil
-	}
-|	"DEFAULT" Expression
-	{
-		$$ = $2
-	}
-
-ProcedureDecl:
-	"DECLARE"/*$1*/
-	 ProcedureDeclIdents/*$2*/
-	 Type/*$3*/
-	 OptCollate/*$4*/
-	 ProcedureOptDefault
-	/*$5*/
-	{
-		x := &ast.ProcedureDecl{
-			DeclNames:   $2.([]string),
-			DeclType:    $3.(*types.FieldType),
-			DeclCollate: $4,
-		}
-		if $5 != nil {
-			x.DeclDefault = $5.(ast.ExprNode)
-		}
-		x.DeclType.SetCollate($4)
-		$$ = x
-	}
-
-ProcedureDeclsOpt:
-	/* Empty */
-	{
-		$$ = []*ast.ProcedureDecl{}
-	}
-|	ProcedureDecls
-	{
-		$$ = $1
-	}
-
-ProcedureDecls:
-	ProcedureDecl ';'
-	{
-		$$ = []*ast.ProcedureDecl{$1.(*ast.ProcedureDecl)}
-	}
-|	ProcedureDecls ProcedureDecl ';'
-	{
-		l := $1.([]*ast.ProcedureDecl)
-		l = append(l, $2.(*ast.ProcedureDecl))
-		$$ = l
-	}
-
-ProcedureProcStmts:
-	/* Empty */
-	{
-		$$ = []ast.StmtNode{}
-	}
-|	ProcedureProcStmts ProcedureProcStmt ';'
-	{
-		l := $1.([]ast.StmtNode)
-		l = append(l, $2.(ast.StmtNode))
-		$$ = l
-	}
-
-ProcedureBlockContent:
-	"BEGIN" ProcedureDeclsOpt ProcedureProcStmts "END"
-	{
-		x := &ast.ProcedureBlock{
-			ProcedureVars:      $2.([]*ast.ProcedureDecl),
-			ProcedureProcStmts: $3.([]ast.StmtNode),
-		}
-		$$ = x
-	}
-
-ProcedureProcStmt:
-	ProcedureStatementStmt
-	{
-		$$ = $1
-	}
-|	ProcedureUnlabeledBlock
-	{
-		$$ = $1
-	}
-
-/********************************************************************************************
- *
- *  Create Procedure Statement
- *
- *  Example:
- *	CREATE
- *  [DEFINER = user]
- *  PROCEDURE [IF NOT EXISTS] sp_name ([proc_parameter[,...]])
- *  [characteristic ...] routine_body
-
- *  proc_parameter:
- *  [ IN | OUT | INOUT ] param_name type
-
- *  func_parameter:
- *  param_name type
-
- *  type:
- *  Any valid MySQL data type
-
- * routine_body:
- *  Valid SQL routine statement
- ********************************************************************************************/
-CreateProcedureStmt:
-	"CREATE" "PROCEDURE" IfNotExists TableName '(' OptSpPdparams ')' ProcedureProcStmt
-	{
-		x := &ast.ProcedureInfo{
-			IfNotExists:    $3.(bool),
-			ProcedureName:  $4.(*ast.TableName),
-			ProcedureParam: $6.([]*ast.StoreParameter),
-			ProcedureBody:  $8,
-		}
-		startOffset := parser.startOffset(&yyS[yypt])
-		originStmt := $8
-		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
-		startOffset = parser.startOffset(&yyS[yypt-3])
-		endOffset := parser.startOffset(&yyS[yypt-1])
-		x.ProcedureParamStr = strings.TrimSpace(parser.src[startOffset:endOffset])
-		$$ = x
-	}
-
-/********************************************************************************************
-
-*  DROP PROCEDURE  [IF EXISTS] sp_name
-
-********************************************************************************************/
-DropProcedureStmt:
-	"DROP" "PROCEDURE" IfExists TableName
-	{
-		$$ = &ast.DropProcedureStmt{
-			IfExists:      $3.(bool),
-			ProcedureName: $4.(*ast.TableName),
-		}
-	}
-%%
+|	SpPdparams 

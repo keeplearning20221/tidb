@@ -119,4 +119,5 @@ var (
 	ErrNoReferencedRow2 = dbterror.ClassOptimizer.NewStd(mysql.ErrNoReferencedRow2)
 	ErrBadDB            = dbterror.ClassOptimizer.NewStd(mysql.ErrBadDB)
 	ErrSpDoesNotExist   = dbterror.ClassOptimizer.NewStd(mysql.ErrSpDoesNotExist)
+	ErrSpWrongNoOfArgs  = dbterror.ClassOptimizer.NewStd(mysql.ErrSpWrongNoOfArgs)
 )

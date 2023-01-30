@@ -78,4 +78,5 @@ var (
 	ErrExistsInHistoryPassword      = dbterror.ClassExecutor.NewStd(mysql.ErrExistsInHistoryPassword)
 	ErrSpAlreadyExists              = dbterror.ClassExecutor.NewStd(mysql.ErrSpAlreadyExists)
 	ErrSpDoesNotExist               = dbterror.ClassExecutor.NewStd(mysql.ErrSpDoesNotExist)
+	ErrSpDupParam                   = dbterror.ClassExecutor.NewStd(mysql.ErrSpDupParam)
 )

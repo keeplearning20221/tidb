@@ -6489,6 +6489,7 @@ UnReservedKeyword:
 |	"PASSWORD_LOCK_TIME"
 |	"DIGEST"
 |	"REUSE" %prec lowerThanEq
+|   "DECLARE"
 
 TiDBKeyword:
 	"ADMIN"
@@ -14670,7 +14671,6 @@ PlanReplayerStmt:
 		$$ = x
 	}
 
-
 /* Stored PROCEDURE parameter declaration list */
 OptSpPdparams:
           /* Empty */ 
@@ -14681,7 +14681,6 @@ OptSpPdparams:
 		  {
 			$$ = $1
 		  }
-        ;
 
 SpPdparams:
         SpPdparams ',' SpPdparam
@@ -14694,7 +14693,6 @@ SpPdparams:
 		{
          $$ = []*ast.StoreParameter{$1.(*ast.StoreParameter)}
 		}
-        ;
 
 SpPdparam:
         SpOptInout Identifier Type OptCollate
@@ -14707,14 +14705,12 @@ SpPdparam:
 		   }
 		   $$ = x
         }
-        ;
 
 SpOptInout:
           /* Empty */ { $$ = ast.MODE_IN; }
         | "IN"      { $$ = ast.MODE_IN; }
         | "OUT"     { $$ = ast.MODE_OUT; }
         | "INOUT"   { $$ = ast.MODE_INOUT; }
-        ;
 
 ProcedureStatementStmt:
 	    SelectStmt
@@ -14740,12 +14736,11 @@ ProcedureStatementStmt:
 	|	CommitStmt
 	|	RollbackStmt
 	|   ExplainStmt
-	;
+	|   SetOprStmt
 
 ProcedureUnlabeledBlock:
 	ProcedureBlockContent
 	{ $$ = $1}
-	;
 
 ProcedureDeclIdents:
     Identifier
@@ -14758,15 +14753,12 @@ ProcedureDeclIdents:
 		l = append(l,$3)
 		$$ = l
 	}
-	;
 
 ProcedureOptDefault:
     /* Empty */
     { $$ = nil }
 	| "DEFAULT"  Expression 
 	{ $$ = $2 }
-	;
-
 
 ProcedureDecl:
     "DECLARE"                  /*$1*/
@@ -14797,8 +14789,6 @@ ProcedureDeclsOpt:
 		$$ = $1
 	}
 
-
-
 ProcedureDecls:
     ProcedureDecl ';'
     { 
@@ -14810,7 +14800,6 @@ ProcedureDecls:
 		l = append(l,$2.(*ast.ProcedureDecl))
 		$$ = l
 	}
-	;
 
 ProcedureProcStmts:
     /* Empty */
@@ -14837,9 +14826,6 @@ ProcedureBlockContent:
 	  $$ = x
 
    }
-   ;
-
-
 
 ProcedureProcStmt:
      ProcedureStatementStmt
@@ -14850,7 +14836,7 @@ ProcedureProcStmt:
 	{
 		$$ = $1
 	}
-    ;
+
 /********************************************************************************************
  *
  *  Create Procedure Statement
@@ -14883,10 +14869,14 @@ ProcedureProcStmt:
 			ProcedureParam: $6.([]*ast.StoreParameter),
 			ProcedureBody: $8,
 		}
+		startOffset := parser.startOffset(&yyS[yypt])
+		originStmt := $8
+		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+		startOffset = parser.startOffset(&yyS[yypt-3])
+        endOffset := parser.startOffset(&yyS[yypt-1])
+		x.ProcedureParamStr = strings.TrimSpace(parser.src[startOffset:endOffset])
 		$$ = x
 	}
-	;
-
 
 /********************************************************************************************
 
@@ -14901,5 +14891,5 @@ DropProcedureStmt:
 		ProcedureName: $4.(*ast.TableName),
 		}
 	}
- ;
+
 %%

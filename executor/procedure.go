@@ -15,7 +15,6 @@
 package executor
 
 import (
-	"bytes"
 	"context"
 	"strings"
 
@@ -23,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -34,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
+// ProcedureExec create 、drop procedure exec plan.
 type ProcedureExec struct {
 	baseExecutor
 	done          bool
@@ -42,8 +41,10 @@ type ProcedureExec struct {
 	oldSqlMod     string
 	procedureInfo *plannercore.ProcedurebodyInfo
 	Plan          *plannercore.ProcedurePlan
+	outParam      map[string]string
 }
 
+// buildCreateProcedure Create a new stored procedure executor.
 func (b *executorBuilder) buildCreateProcedure(v *plannercore.CreateProcedure) Executor {
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
 	base.initCap = chunk.ZeroCapacity
@@ -52,10 +53,12 @@ func (b *executorBuilder) buildCreateProcedure(v *plannercore.CreateProcedure) E
 		Statement:    v.ProcedureInfo,
 		is:           b.is,
 		done:         false,
+		outParam:     make(map[string]string, 10),
 	}
 	return e
 }
 
+// buildCreateProcedure Drop a new stored procedure executor.
 func (b *executorBuilder) buildDropProcedure(v *plannercore.DropProcedure) Executor {
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
 	base.initCap = chunk.ZeroCapacity
@@ -64,32 +67,45 @@ func (b *executorBuilder) buildDropProcedure(v *plannercore.DropProcedure) Execu
 		Statement:    v.Procedure,
 		is:           b.is,
 		done:         false,
+		outParam:     make(map[string]string, 10),
 	}
 	return e
 }
 
+func (e *ProcedureExec) autoNewTxn() bool {
+	switch e.Statement.(type) {
+	case *ast.ProcedureInfo:
+		return true
+	case *ast.DropProcedureStmt:
+		return true
+	}
+	return false
+}
 func (e *ProcedureExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if e.done {
 		return nil
 	}
-	if err = sessiontxn.NewTxnInStmt(ctx, e.ctx); err != nil {
-		return err
+	// implicit commit
+	if e.autoNewTxn() {
+		if err = sessiontxn.NewTxnInStmt(ctx, e.ctx); err != nil {
+			return err
+		}
+		defer func() { e.ctx.GetSessionVars().SetInTxn(false) }()
 	}
-	defer func() { e.ctx.GetSessionVars().SetInTxn(false) }()
 	switch x := e.Statement.(type) {
 	case *ast.ProcedureInfo:
-		err = e.CreateProcedure(ctx, x)
+		err = e.createProcedure(ctx, x)
 	case *ast.DropProcedureStmt:
-		err = e.DropProcedure(ctx, x)
+		err = e.dropProcedure(ctx, x)
 	case *ast.CallStmt:
-		err = e.CallProcedure(ctx, x)
+		err = e.callProcedure(ctx, x)
 	}
 
 	e.done = true
 	return err
 }
 
-// use the same internal executor to read within the same transaction
+// procedureExistsInternal Query whether the stored procedure exists.
 func procedureExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, db string) (bool, error) {
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, `SELECT * FROM %n.%n WHERE route_schema=%? AND name=%? AND type= 'PROCEDURE' FOR UPDATE;`, mysql.SystemDB, "routines", db, name)
@@ -110,6 +126,7 @@ func procedureExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecuto
 	return rows > 0, err
 }
 
+// getProcedureinfo read stored procedure content.
 func getProcedureinfo(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, db string) (*plannercore.ProcedurebodyInfo, error) {
 	sql := new(strings.Builder)
 	//names = []string{"Procedure", "sql_mode", "Create Procedure", "character_set_client", "collation_connection", "Database Collation"}
@@ -140,11 +157,14 @@ func getProcedureinfo(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name
 	return procedurebodyInfo, nil
 }
 
-func (e *ProcedureExec) CreateProcedure(ctx context.Context, s *ast.ProcedureInfo) error {
+// createProcedure Save stored procedure content.
+func (e *ProcedureExec) createProcedure(ctx context.Context, s *ast.ProcedureInfo) error {
 	e.ctx.GetSessionVars().SetInCallProcedure()
-	defer e.ctx.GetSessionVars().OutCallProcedure()
 	e.ctx.GetSessionVars().NewProcedureVariables()
-	defer e.ctx.GetSessionVars().ClearProcedureVariable()
+	defer func() {
+		e.ctx.GetSessionVars().OutCallProcedure()
+		e.ctx.GetSessionVars().ClearProcedureVariable()
+	}()
 
 	procedurceName := s.ProcedureName.Name.L
 	procedurceSchema := s.ProcedureName.Schema
@@ -152,25 +172,16 @@ func (e *ProcedureExec) CreateProcedure(ctx context.Context, s *ast.ProcedureInf
 	if !ok {
 		return ErrBadDB.GenWithStackByArgs(procedurceSchema)
 	}
-	var buf bytes.Buffer
-	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
-	for i, procedureParam := range s.ProcedureParam {
-		if i > 0 {
-			restoreCtx.WriteKeyWord(",")
-		}
-		err := procedureParam.Restore(restoreCtx)
-		if err != nil {
-			return err
-		}
-	}
-	parameterStr := buf.String()
-	buf.Reset()
 
-	err := s.ProcedureBody.Restore(restoreCtx)
-	if err != nil {
-		return err
+	parameterStr := s.ProcedureParamStr
+	if len(parameterStr) > 0 && parameterStr[0] == '(' {
+		parameterStr = parameterStr[1:]
 	}
-	bodyStr := buf.String()
+	if len(parameterStr) > 0 && parameterStr[len(parameterStr)-1] == ')' {
+		parameterStr = parameterStr[:len(parameterStr)-1]
+	}
+
+	bodyStr := s.ProcedureBody.Text()
 	sqlMod := variable.GetSysVar(variable.SQLModeVar)
 	if sqlMod == nil {
 		return errors.New("unknown system var " + variable.SQLModeVar)
@@ -218,6 +229,7 @@ func (e *ProcedureExec) CreateProcedure(ctx context.Context, s *ast.ProcedureInf
 	return nil
 }
 
+// fetchShowCreateProcdure query stored procedure.
 func (e *ShowExec) fetchShowCreateProcdure(ctx context.Context) error {
 	if e.Procedure.Schema.O == "" {
 		e.Procedure.Schema = model.NewCIStr(e.ctx.GetSessionVars().CurrentDB)
@@ -239,11 +251,11 @@ func (e *ShowExec) fetchShowCreateProcdure(ctx context.Context) error {
 	//names = []string{"Procedure", "sql_mode", "Create Procedure", "character_set_client", "collation_connection", "Database Collation"}
 	e.appendRow([]interface{}{e.Procedure.Name.O, procedureInfo.SqlMode, procedureInfo.Procedurebody, procedureInfo.CharacterSetClient,
 		procedureInfo.CollationConnection, procedureInfo.ShemaCollation})
-	e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	return nil
 }
 
-func (e *ProcedureExec) DropProcedure(ctx context.Context, s *ast.DropProcedureStmt) error {
+// dropProcedure delete stored procedure.
+func (e *ProcedureExec) dropProcedure(ctx context.Context, s *ast.DropProcedureStmt) error {
 	procedurceName := s.ProcedureName.Name.L
 	procedurceSchema := s.ProcedureName.Schema
 	_, ok := e.is.SchemaByName(procedurceSchema)
@@ -280,10 +292,11 @@ func (e *ProcedureExec) DropProcedure(ctx context.Context, s *ast.DropProcedureS
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "commit"); err != nil {
 		return err
 	}
-	e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+
 	return nil
 }
 
+// buildCallProcedure generate the execution plan of the call.
 func (b *executorBuilder) buildCallProcedure(v *plannercore.CallStmt) Executor {
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
 	base.initCap = chunk.ZeroCapacity
@@ -295,10 +308,12 @@ func (b *executorBuilder) buildCallProcedure(v *plannercore.CallStmt) Executor {
 		oldSqlMod:     v.OldSqlMod,
 		procedureInfo: v.ProcedureInfo,
 		Plan:          v.Plan,
+		outParam:      make(map[string]string, 10),
 	}
 	return e
 }
 
+// parseNode execute ProcedureBaseBody.
 func (e *ProcedureExec) parseNode(ctx context.Context, node plannercore.ProcedureBaseBody) (err error) {
 	var nameList []string
 	switch node.(type) {
@@ -322,6 +337,7 @@ func (e *ProcedureExec) parseNode(ctx context.Context, node plannercore.Procedur
 			}
 		}
 
+	//to do:add logical structure.
 	case *plannercore.ProcedureSQL:
 		err := e.execNode(ctx, node.(*plannercore.ProcedureSQL).Stmt)
 		if err != nil {
@@ -333,6 +349,7 @@ func (e *ProcedureExec) parseNode(ctx context.Context, node plannercore.Procedur
 	return nil
 }
 
+// getDarumVar get expr result.
 func (e *ProcedureExec) getDarumVar(sqlType *types.FieldType, defaultVar expression.Expression) (*types.Datum, error) {
 	var datum types.Datum
 	var err error
@@ -352,6 +369,7 @@ func (e *ProcedureExec) getDarumVar(sqlType *types.FieldType, defaultVar express
 	return &newdatum, nil
 }
 
+// createVariable Create stored procedure internal variable.
 func (e *ProcedureExec) createVariable(ctx context.Context, pval *plannercore.ProcedurebodyVal) ([]string, error) {
 	datum, err := e.getDarumVar(pval.DeclType, pval.DeclDefault)
 	if err != nil {
@@ -366,6 +384,7 @@ func (e *ProcedureExec) createVariable(ctx context.Context, pval *plannercore.Pr
 	return pval.DeclNames, nil
 }
 
+// realizeFunction implement stored procedure execution.
 func (e *ProcedureExec) realizeFunction(ctx context.Context, node *plannercore.ProcedureBlock) (err error) {
 	var nameList []string
 	for _, pvar := range node.Vars {
@@ -386,27 +405,10 @@ func (e *ProcedureExec) realizeFunction(ctx context.Context, node *plannercore.P
 			return err
 		}
 	}
-	// switch node.ProcedureBody.(type) {
-	// case *ast.ProcedureBlock:
-	// 	for _, stmt := range node.ProcedureBody.(*ast.ProcedureBlock).ProcedureVars {
-	// 		fmt.Print(stmt)
-	// 	}
-
-	// 	for _, stmt := range node.ProcedureBody.(*ast.ProcedureBlock).ProcedureProcStmts {
-	// 		err = e.parseNode(ctx, stmt)
-	// 		if err != nil {
-	// 			return err
-	// 		}
-	// 	}
-	// default:
-	// 	err = e.parseNode(ctx, node.ProcedureBody)
-	// 	if err != nil {
-	// 		return err
-	// 	}
-	// }
 	return nil
 }
 
+// execWithResult Execute sql with results.
 func (e *ProcedureExec) execWithResult(ctx context.Context, node ast.StmtNode) error {
 	err := e.ctx.GetSessionExec().MultiHanldeNodeWithResult(ctx, node)
 	if err != nil {
@@ -415,6 +417,7 @@ func (e *ProcedureExec) execWithResult(ctx context.Context, node ast.StmtNode) e
 	return nil
 }
 
+// execDefalutStmt Execute sql without results.
 func (e *ProcedureExec) execDefalutStmt(ctx context.Context, node ast.StmtNode) error {
 	err := e.ctx.GetSessionExec().MultiHanldeNode(ctx, node)
 	if err != nil {
@@ -423,6 +426,7 @@ func (e *ProcedureExec) execDefalutStmt(ctx context.Context, node ast.StmtNode) 
 	return nil
 }
 
+// execNode implement node execution.
 func (e *ProcedureExec) execNode(ctx context.Context, node ast.StmtNode) error {
 	switch node.(type) {
 	case *ast.SelectStmt:
@@ -446,23 +450,100 @@ func (e *ProcedureExec) execNode(ctx context.Context, node ast.StmtNode) error {
 	return nil
 }
 
-func (e *ProcedureExec) CallProcedure(ctx context.Context, s *ast.CallStmt) error {
+// inParam handle input parameters.
+func (e *ProcedureExec) inParam(ctx context.Context, param *plannercore.ProcedureParameterVal, inName string) error {
+	datum, ok := e.ctx.GetSessionVars().GetUserVarVal(inName)
+	if !ok {
+		datum = types.NewDatum("")
+	}
+	newdatum, err := datum.Clone().ConvertTo(e.ctx.GetSessionVars().StmtCtx, param.DeclType)
+	if err != nil {
+		return err
+	}
+	err = e.ctx.GetSessionVars().NewProcedureVariable(param.DeclName, newdatum, param.DeclType)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// callParam handle store procedure parameters.
+func (e *ProcedureExec) callParam(ctx context.Context, s *ast.CallStmt) error {
+	for i, param := range e.Plan.ProcedureParam {
+		switch s.Procedure.Args[i].(type) {
+		case *ast.VariableExpr:
+			name := s.Procedure.Args[i].(*ast.VariableExpr).Name
+			if (param.ParamType == ast.MODE_IN) || (param.ParamType == ast.MODE_INOUT) {
+				err := e.inParam(ctx, param, name)
+				return err
+			}
+			if (param.ParamType == ast.MODE_OUT) || (param.ParamType == ast.MODE_INOUT) {
+				_, ok := e.outParam[param.DeclName]
+				if ok {
+					return ErrSpDupParam.GenWithStackByArgs(param.DeclName)
+				}
+				e.outParam[param.DeclName] = name
+			}
+
+		default:
+			datum, err := e.getDarumVar(param.DeclType, param.DeclInput)
+			if err != nil {
+				return err
+			}
+			if (param.ParamType == ast.MODE_IN) || (param.ParamType == ast.MODE_INOUT) {
+				err = e.ctx.GetSessionVars().NewProcedureVariable(param.DeclName, *datum, param.DeclType)
+				if err != nil {
+					return err
+				}
+			}
+			if (param.ParamType == ast.MODE_OUT) || (param.ParamType == ast.MODE_INOUT) {
+				_, ok := e.outParam[param.DeclName]
+				if ok {
+					return ErrSpDupParam.GenWithStackByArgs(param.DeclName)
+				}
+				e.outParam[param.DeclName] = param.DeclName
+			}
+		}
+	}
+	return nil
+}
+
+// outParams handle out parameters.
+func (e *ProcedureExec) outParams() error {
+	for _, key := range e.outParam {
+		varType, datum, notFind, err := e.ctx.GetSessionVars().GetProcedureVariable(key)
+		if err != nil {
+			return err
+		}
+		if notFind {
+			continue
+		}
+		e.ctx.GetSessionVars().SetUserVarVal(key, datum)
+		e.ctx.GetSessionVars().SetUserVarType(key, varType)
+	}
+	return nil
+}
+
+func (e *ProcedureExec) callProcedure(ctx context.Context, s *ast.CallStmt) error {
 	defer func() {
 		_ = e.ctx.GetSessionVars().SetSystemVar(variable.SQLModeVar, e.oldSqlMod)
 	}()
-
 	mutliStateModeSave := variable.GetSysVar(variable.TiDBMultiStatementMode)
-	defer variable.SetSysVar(variable.TiDBMultiStatementMode, mutliStateModeSave.Value)
 	variable.SetSysVar(variable.TiDBMultiStatementMode, "ON")
 	clientCapabilitySave := e.ctx.GetSessionVars().ClientCapability
-	defer func() {
-		e.ctx.GetSessionVars().ClientCapability = clientCapabilitySave
-	}()
 	e.ctx.GetSessionVars().ClientCapability = (e.ctx.GetSessionVars().ClientCapability | mysql.ClientMultiStatements)
 	e.ctx.GetSessionVars().SetInCallProcedure()
-	defer e.ctx.GetSessionVars().OutCallProcedure()
 	e.ctx.GetSessionVars().NewProcedureVariables()
-	defer e.ctx.GetSessionVars().ClearProcedureVariable()
+	defer func() {
+		e.ctx.GetSessionVars().ClientCapability = clientCapabilitySave
+		variable.SetSysVar(variable.TiDBMultiStatementMode, mutliStateModeSave.Value)
+		e.ctx.GetSessionVars().OutCallProcedure()
+		e.ctx.GetSessionVars().ClearProcedureVariable()
+	}()
+	err := e.callParam(ctx, s)
+	if err != nil {
+		return err
+	}
 	switch e.Plan.Procedurebody.(type) {
 	case *plannercore.ProcedureBlock:
 		err := e.realizeFunction(ctx, e.Plan.Procedurebody.(*plannercore.ProcedureBlock))
@@ -472,11 +553,9 @@ func (e *ProcedureExec) CallProcedure(ctx context.Context, s *ast.CallStmt) erro
 	default:
 		return errors.Errorf("Call procedure unsupport node %v", e.Plan.Procedurebody)
 	}
-
-	// todo : procedure param and variables
-	// _, err = e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "select database(")
-	// if err != nil {
-	// 	return err
-	// }
+	err = e.outParams()
+	if err != nil {
+		return err
+	}
 	return nil
 }

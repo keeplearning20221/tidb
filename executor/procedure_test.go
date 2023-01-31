@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCreateProcedure(t *testing.T) {
+func TestCreateShowDropProcedure(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.InProcedure()
@@ -53,8 +53,15 @@ func TestCreateProcedure(t *testing.T) {
 	tk.MustExec("create procedure if not exists sp_test5(id int,in id1 int,out id2 varchar(100),inout id3 int) begin select@b; end;")
 	tk.MustQuery("show create procedure sp_test5").Check(testkit.Rows("sp_test5 ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION " +
 		" CREATE PROCEDURE `sp_test5`(id int,in id1 int,out id2 varchar(100),inout id3 int) begin select@b; end; utf8mb4 utf8mb4_bin utf8mb4_bin"))
+	// Duplicate input parameter name.
 	tk.MustGetErrCode("create procedure sp_test6(in id int, out id int) begin select @a; end;", 1330)
+	// parameter does not exist.
 	tk.MustGetErrCode("create procedure sp_test6() begin set a = 1; end;", 1193)
+	// Variables should be applied before sql.
+	tk.MustGetErrCode("create procedure sp_test6() begin set @a = 1;declare s varchar(100); end;", 1064)
+	// sp variables can only be declared inside.
+	tk.MustGetErrCode("create procedure sp_test6() begin set @a = 1; end;declare s varchar(100);", 1064)
+	// drop procedure
 	tk.MustExec("drop procedure sp_test1")
 	tk.MustExec("drop procedure sp_test2")
 	tk.MustExec("drop procedure sp_test3")
@@ -62,6 +69,7 @@ func TestCreateProcedure(t *testing.T) {
 	tk.MustExec("drop procedure sp_test5")
 	err := tk.QueryToErr("show create procedure sp_test1")
 	require.EqualError(t, err, "[executor:1305]PROCEDURE sp_test1 does not exist")
+
 	testcases := []string{"create procedure proc_1() begin declare s varchar(100) DEFAULT FROM_UNIXTIME(1447430881);select s;SELECT * FROM `t1`;SELECT * FROM `t2`;INSERT INTO `t1` VALUES (111);END;",
 		"create procedure if not exists proc_2() begin declare s varchar(100) DEFAULT FROM_UNIXTIME(1447430881);select s;SELECT * FROM `t1`;SELECT * FROM `t2`;INSERT INTO `t1` VALUES (111);END;",
 		"create procedure if not exists proc_3(in id int,inout id2 int,out id3 int) begin declare s varchar(100) DEFAULT FROM_UNIXTIME(1447430881);select s;SELECT * FROM `t1`;SELECT * FROM `t2`;INSERT INTO `t1` VALUES (111);END;",
@@ -91,6 +99,17 @@ func TestCreateProcedure(t *testing.T) {
 			"select a.id,a.username,a.password,a.age,a.sex,ad.score from user a right join user_score ad on a.id = ad.user_id where a.id > 10 and a.id < 50;" +
 			"select a.id,a.username,a.password,a.age,a.sex,ad.score from user a left join user_score ad on a.id = ad.user_id where a.id in (select user_id from user_score where score > 90 and score < 99 ) " +
 			"union select a.id,a.username,a.password,a.age,a.sex,ad.score from user a left join user_score ad on a.id = ad.user_id where a.id in (select user_id from user_score where score > 30 and score < 70 ); end;",
+		// 	block recursion
+		"create procedure proc_13() begin select @a; begin select @b; end; end",
+		"create procedure proc_14() begin select @a; insert into t2 select * from t1; begin select @b;update t2 set id = 1; end; end",
+		// test declared variable type
+		"create procedure proc_15() begin declare s varchar(100) DEFAULT FROM_UNIXTIME(1447430881); select @a; insert into t2 select * from t1; begin declare s varchar(100); select @b;update t2 set id = 1; end; end",
+		"create procedure proc_16() begin declare s varchar(100) ; declare s int; declare s bigint;declare s float;declare s double;select @a; insert into t2 select * from t1; begin declare s varchar(100); select @b;update t2 set id = 1; end; end",
+		"create procedure proc_17() begin declare s char(100) ; declare s blob; declare s text;declare s DECIMAL(30,2);declare s datetime;select @a; insert into t2 select * from t1; begin declare s varchar(100); select @b;update t2 set id = 1; end; end",
+		// test default
+		"create procedure proc_18() begin declare s varchar(100) default s; declare s int default 1; declare s bigint default @a;select @a; insert into t2 select * from t1; begin declare s varchar(100); select @b;update t2 set id = 1; end; end",
+		// test insert select
+		"create procedure proc_19() begin select @a; insert into t2 select * from t1; begin declare s varchar(100);begin declare s varchar(100);begin declare s varchar(100); select @b;update t2 set id = 1; end; select @b;update t2 set id = 1; end; select @b;update t2 set id = 1; end; end",
 	}
 	res := []string{
 		" CREATE PROCEDURE `proc_1`() begin declare s varchar(100) DEFAULT FROM_UNIXTIME(1447430881);select s;SELECT * FROM `t1`;SELECT * FROM `t2`;INSERT INTO `t1` VALUES (111);END;",
@@ -122,6 +141,13 @@ func TestCreateProcedure(t *testing.T) {
 			"select a.id,a.username,a.password,a.age,a.sex,ad.score from user a right join user_score ad on a.id = ad.user_id where a.id > 10 and a.id < 50;" +
 			"select a.id,a.username,a.password,a.age,a.sex,ad.score from user a left join user_score ad on a.id = ad.user_id where a.id in (select user_id from user_score where score > 90 and score < 99 ) " +
 			"union select a.id,a.username,a.password,a.age,a.sex,ad.score from user a left join user_score ad on a.id = ad.user_id where a.id in (select user_id from user_score where score > 30 and score < 70 ); end;",
+		" CREATE PROCEDURE `proc_13`() begin select @a; begin select @b; end; end",
+		" CREATE PROCEDURE `proc_14`() begin select @a; insert into t2 select * from t1; begin select @b;update t2 set id = 1; end; end",
+		" CREATE PROCEDURE `proc_15`() begin declare s varchar(100) DEFAULT FROM_UNIXTIME(1447430881); select @a; insert into t2 select * from t1; begin declare s varchar(100); select @b;update t2 set id = 1; end; end",
+		" CREATE PROCEDURE `proc_16`() begin declare s varchar(100) ; declare s int; declare s bigint;declare s float;declare s double;select @a; insert into t2 select * from t1; begin declare s varchar(100); select @b;update t2 set id = 1; end; end",
+		" CREATE PROCEDURE `proc_17`() begin declare s char(100) ; declare s blob; declare s text;declare s DECIMAL(30,2);declare s datetime;select @a; insert into t2 select * from t1; begin declare s varchar(100); select @b;update t2 set id = 1; end; end",
+		" CREATE PROCEDURE `proc_18`() begin declare s varchar(100) default s; declare s int default 1; declare s bigint default @a;select @a; insert into t2 select * from t1; begin declare s varchar(100); select @b;update t2 set id = 1; end; end",
+		" CREATE PROCEDURE `proc_19`() begin select @a; insert into t2 select * from t1; begin declare s varchar(100);begin declare s varchar(100);begin declare s varchar(100); select @b;update t2 set id = 1; end; select @b;update t2 set id = 1; end; select @b;update t2 set id = 1; end; end",
 	}
 	sqlmod := " ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION "
 	collateStr := " utf8mb4 utf8mb4_bin utf8mb4_bin"
@@ -130,9 +156,9 @@ func TestCreateProcedure(t *testing.T) {
 		tk.MustExec(testcase)
 		name := "proc_" + strconv.Itoa(i+1)
 		tk.MustQuery(sql + name).Check(testkit.Rows(name + sqlmod + res[i] + collateStr))
+		tk.MustExec("drop procedure " + name)
 	}
 
-	tk.MustExec("drop procedure proc_1")
 	tk.MustGetErrCode("drop procedure proc_1", 1305)
 	tk.MustExec("drop procedure if exists proc_1")
 }

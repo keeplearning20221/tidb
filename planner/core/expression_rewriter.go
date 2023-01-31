@@ -1299,6 +1299,10 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		er.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false
 	}
+
+	if er.err != nil {
+		return retNode, false
+	}
 	return originInNode, true
 }
 

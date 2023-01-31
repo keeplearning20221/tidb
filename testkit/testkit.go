@@ -50,6 +50,7 @@ type TestKit struct {
 	store   kv.Storage
 	session session.Session
 	alloc   chunk.Allocator
+	Res     []*Result
 }
 
 // NewTestKit returns a new *TestKit.
@@ -60,6 +61,7 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 		t:       t,
 		store:   store,
 		alloc:   chunk.NewAllocator(),
+		Res:     make([]*Result, 0),
 	}
 	tk.RefreshSession()
 
@@ -506,6 +508,61 @@ func (tk *TestKit) MustNoGlobalStats(table string) bool {
 // CheckLastMessage checks last message after executing MustExec
 func (tk *TestKit) CheckLastMessage(msg string) {
 	tk.require.Equal(tk.Session().LastMessage(), msg)
+}
+
+// SqlParse for parse procedure.
+func (tk *TestKit) SqlParse(_ context.Context, sql string) ([]ast.StmtNode, error) {
+	return tk.session.Parse(context.Background(), sql)
+}
+
+// MultiHanldeNodeWithResult for execute procedure SQL with result
+func (tk *TestKit) MultiHanldeNodeWithResult(_ context.Context, stmt ast.StmtNode) error {
+	ctx := context.Background()
+	comment := fmt.Sprintf("stmt:%v", stmt)
+	var rs sqlexec.RecordSet
+	var err error
+	if s, ok := stmt.(*ast.NonTransactionalDMLStmt); ok {
+		rs, err = session.HandleNonTransactionalDML(ctx, s, tk.Session())
+	} else {
+		rs, err = tk.Session().ExecuteStmt(ctx, stmt)
+	}
+	if err != nil {
+		tk.session.GetSessionVars().StmtCtx.AppendError(err)
+		return err
+	}
+	tk.require.NotNil(rs, comment)
+	tk.Res = append(tk.Res, tk.ResultSetToResultWithCtx(ctx, rs, comment))
+	return nil
+}
+
+// MultiHanldeNode for execute procedure SQL without result
+func (tk *TestKit) MultiHanldeNode(_ context.Context, stmt ast.StmtNode) error {
+	ctx := context.Background()
+	var rs sqlexec.RecordSet
+	var err error
+	if s, ok := stmt.(*ast.NonTransactionalDMLStmt); ok {
+		rs, err = session.HandleNonTransactionalDML(ctx, s, tk.Session())
+	} else {
+		rs, err = tk.Session().ExecuteStmt(ctx, stmt)
+	}
+	if err != nil {
+		tk.session.GetSessionVars().StmtCtx.AppendError(err)
+		return err
+	}
+	if rs != nil {
+		tk.require.NoError(rs.Close())
+	}
+	return nil
+}
+
+// InProcedure init status for procedure
+func (tk *TestKit) InProcedure() {
+	tk.session.SetSessionExec(tk)
+}
+
+// ClearProcedureRes clear procedure result
+func (tk *TestKit) ClearProcedureRes() {
+	tk.Res = tk.Res[0:0]
 }
 
 // RegionProperityClient is to get region properties.

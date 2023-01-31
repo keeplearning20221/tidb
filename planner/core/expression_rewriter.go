@@ -1290,11 +1290,6 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		er.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false
 	}
-
-	if er.err != nil {
-		retNode = er.spVariablesRewrite(retNode)
-		return retNode, false
-	}
 	return originInNode, true
 }
 
@@ -2419,52 +2414,3 @@ func (er *expressionRewriter) searchSpVariables(name string) (bool, error) {
 	er.ctxStackAppend(value, types.EmptyName)
 	return false, nil
 }
-
-func (er *expressionRewriter) spVariablesRewrite(v ast.Node) ast.Node {
-	if !er.sctx.GetSessionVars().GetCallProcedure() {
-		return v
-	}
-	columnName, ok := v.(*ast.ColumnName)
-	if !ok {
-		return v
-	}
-	if !er.sctx.GetSessionVars().CheckProcedureVariable(columnName.Name.String()) {
-		return v
-	}
-	v = &ast.VariableExpr{
-		Name:     columnName.Name.String(),
-		IsGlobal: false,
-		IsSystem: false,
-	}
-	v.SetText(nil, columnName.Name.String())
-	return v
-}
-
-// func (er *expressionRewriter) rewriteSPVariable(v *ast.VariableExpr) (bool, error) {
-// 	sessionVars := er.sctx.GetSessionVars()
-// 	tp, _, isNotFind, err := sessionVars.GetProcedureVariable(v.Name)
-// 	if err != nil {
-// 		return false, err
-// 	}
-// 	if isNotFind {
-// 		return true, nil
-// 	}
-// 	tp = tp.Clone()
-// 	stkLen := len(er.ctxStack)
-// 	if v.Value != nil {
-// 		tp := er.ctxStack[stkLen-1].GetType()
-// 		er.ctxStack[stkLen-1], er.err = er.newFunction(ast.SetVar, tp,
-// 			expression.DatumToConstant(types.NewDatum(v.Name), er.ctxStack[stkLen-1].GetType().GetType(), 0),
-// 			er.ctxStack[stkLen-1])
-// 		er.ctxNameStk[stkLen-1] = types.EmptyName
-// 		return false ,nil
-// 	}
-// 	f, err := er.newFunction(ast.GetVar, tp, expression.DatumToConstant(types.NewStringDatum(v.Name), tp.GetType(), 0))
-// 	if err != nil {
-// 		er.err = err
-// 		return false ,err
-// 	}
-// 	f.SetCoercibility(expression.CoercibilityImplicit)
-// 	er.ctxStackAppend(f, types.EmptyName)
-// 	return false ,nil
-// }

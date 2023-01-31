@@ -10835,6 +10835,13 @@ ShowStmt:
 	{
 		$$ = $4.(*ast.ShowStmt)
 	}
+|	"SHOW" "CREATE" "PROCEDURE" TableName
+	{
+		$$ = &ast.ShowStmt{
+			Tp:        ast.ShowCreateProcedure,
+			Procedure: $4.(*ast.TableName),
+		}
+	}
 
 ShowPlacementTarget:
 	DatabaseSym DBName
@@ -14751,6 +14758,9 @@ CreateProcedureStmt:
 		originStmt := $8
 		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 		startOffset = parser.startOffset(&yyS[yypt-3])
+		if parser.src[startOffset] == '(' {
+			startOffset++
+		}
 		endOffset := parser.startOffset(&yyS[yypt-1])
 		x.ProcedureParamStr = strings.TrimSpace(parser.src[startOffset:endOffset])
 		$$ = x

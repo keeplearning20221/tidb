@@ -268,7 +268,7 @@ func (b *PlanBuilder) buildCallProcedure(ctx context.Context, node *ast.CallStmt
 		return nil, ErrNoDB
 	}
 	// get stored procedure name.
-	procedurceName := node.Procedure.FnName.String()
+	procedurceName := strings.ToLower(node.Procedure.FnName.String())
 	// Check if database exists
 	_, ok := b.is.SchemaByName(node.Procedure.Schema)
 	if !ok {
@@ -343,6 +343,9 @@ func fetchProcdureInfo(sctx sessionctx.Context, name, db string) (*Procedurebody
 	defer terror.Call(rs.Close)
 	if rows, err = sqlexec.DrainRecordSet(ctx, rs, 8); err != nil {
 		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, ErrSpDoesNotExist.GenWithStackByArgs("PROCEDURE", name)
 	}
 	if len(rows) != 1 {
 		return nil, errors.New("Multiple stored procedures found in table " + mysql.Routines)

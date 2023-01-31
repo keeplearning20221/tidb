@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -108,7 +109,7 @@ func (e *ProcedureExec) Next(ctx context.Context, req *chunk.Chunk) (err error) 
 // procedureExistsInternal Query whether the stored procedure exists.
 func procedureExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, db string) (bool, error) {
 	sql := new(strings.Builder)
-	sqlexec.MustFormatSQL(sql, `SELECT * FROM %n.%n WHERE route_schema=%? AND name=%? AND type= 'PROCEDURE' FOR UPDATE;`, mysql.SystemDB, "routines", db, name)
+	sqlexec.MustFormatSQL(sql, `SELECT * FROM %n.%n WHERE route_schema=%? AND name=%? AND type= 'PROCEDURE' FOR UPDATE;`, mysql.SystemDB, mysql.Routines, db, name)
 	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
 		return false, err
@@ -132,8 +133,7 @@ func getProcedureinfo(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name
 	//names = []string{"Procedure", "sql_mode", "Create Procedure", "character_set_client", "collation_connection", "Database Collation"}
 	sqlexec.MustFormatSQL(sql, "select name, sql_mode ,definition_utf8,parameter_str,character_set_client, connection_collation,")
 	sqlexec.MustFormatSQL(sql, "schema_collation from %n.%n where route_schema = %?  and name = %? and type = 'PROCEDURE' ", mysql.SystemDB, mysql.Routines, db, name)
-	l := sql.String()
-	recordSet, err := sqlExecutor.ExecuteInternal(ctx, l)
+	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
 		return nil, err
 	}
@@ -149,12 +149,66 @@ func getProcedureinfo(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name
 		return nil, errors.New("Multiple stored procedures found in table " + mysql.Routines)
 	}
 	procedurebodyInfo := &plannercore.ProcedurebodyInfo{}
-	procedurebodyInfo.Procedurebody = " CREATE PROCEDURE " + name + "(" + rows[0].GetString(3) + ") \n" + rows[0].GetString(2)
+	procedurebodyInfo.Procedurebody = " CREATE PROCEDURE `" + name + "`(" + rows[0].GetString(3) + ") " + rows[0].GetString(2)
 	procedurebodyInfo.SqlMode = rows[0].GetSet(1).String()
 	procedurebodyInfo.CharacterSetClient = rows[0].GetString(4)
 	procedurebodyInfo.CollationConnection = rows[0].GetString(5)
 	procedurebodyInfo.ShemaCollation = rows[0].GetString(6)
 	return procedurebodyInfo, nil
+}
+
+func (e *ProcedureExec) newEmptyVars(ctx context.Context, name string, DeclType *types.FieldType) error {
+	datum := types.NewDatum(0)
+	err := e.ctx.GetSessionVars().NewProcedureVariable(name, datum, DeclType)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (e *ProcedureExec) checkProcedureVars(ctx context.Context, s *ast.ProcedureInfo) error {
+	nameMap := make(map[string]struct{}, len(s.ProcedureParam))
+	for _, param := range s.ProcedureParam {
+		_, ok := nameMap[param.ParamName]
+		if ok {
+			return ErrSpDupParam.GenWithStackByArgs(param.ParamName)
+		}
+		nameMap[param.ParamName] = struct{}{}
+		err := e.newEmptyVars(ctx, param.ParamName, param.ParamType)
+		if err != nil {
+			return err
+		}
+	}
+	err := e.checkProcedureExists(ctx, s.ProcedureBody)
+	return err
+}
+
+func (e *ProcedureExec) checkProcedureExists(ctx context.Context, stmt ast.StmtNode) error {
+	switch x := stmt.(type) {
+	case *ast.ProcedureBlock:
+		vars := x.ProcedureVars
+		for _, varInfo := range vars {
+			for _, name := range varInfo.DeclNames {
+				err := e.newEmptyVars(ctx, name, varInfo.DeclType)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		stmts := x.ProcedureProcStmts
+		for _, stmt := range stmts {
+			err := e.checkProcedureExists(ctx, stmt)
+			if err != nil {
+				return err
+			}
+		}
+	case *ast.SetStmt:
+		err := e.execDefalutStmt(ctx, x)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // createProcedure Save stored procedure content.
@@ -173,13 +227,17 @@ func (e *ProcedureExec) createProcedure(ctx context.Context, s *ast.ProcedureInf
 		return ErrBadDB.GenWithStackByArgs(procedurceSchema)
 	}
 
+	err := e.checkProcedureVars(ctx, s)
+	if err != nil {
+		return err
+	}
 	parameterStr := s.ProcedureParamStr
-	if len(parameterStr) > 0 && parameterStr[0] == '(' {
-		parameterStr = parameterStr[1:]
-	}
-	if len(parameterStr) > 0 && parameterStr[len(parameterStr)-1] == ')' {
-		parameterStr = parameterStr[:len(parameterStr)-1]
-	}
+	// if len(parameterStr) > 0 && parameterStr[0] == '(' {
+	// 	parameterStr = parameterStr[1:]
+	// }
+	// if len(parameterStr) > 0 && parameterStr[len(parameterStr)-1] == ')' {
+	// 	parameterStr = parameterStr[:len(parameterStr)-1]
+	// }
 
 	bodyStr := s.ProcedureBody.Text()
 	sqlMod := variable.GetSysVar(variable.SQLModeVar)
@@ -190,9 +248,13 @@ func (e *ProcedureExec) createProcedure(ctx context.Context, s *ast.ProcedureInf
 	if chs == nil {
 		return errors.New("unknown system var " + variable.CharacterSetClient)
 	}
-	u := e.ctx.GetSessionVars().User.AuthUsername
-	h := e.ctx.GetSessionVars().User.AuthHostname
-	userInfo := u + "@" + h
+	var userInfo string
+	if e.ctx.GetSessionVars().User != nil {
+		u := e.ctx.GetSessionVars().User.AuthUsername
+		h := e.ctx.GetSessionVars().User.AuthHostname
+		userInfo = u + "@" + h
+	}
+
 	_, sessionCollation := e.ctx.GetSessionVars().GetCharsetInfo()
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, "insert into mysql.routines (route_schema, name, type, definition, definition_utf8, parameter_str,")
@@ -203,12 +265,13 @@ func (e *ProcedureExec) createProcedure(ctx context.Context, s *ast.ProcedureInf
 	if err != nil {
 		return err
 	}
-	defer e.releaseSysSession(ctx, sysSession)
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	defer e.releaseSysSession(internalCtx, sysSession)
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
-	if _, err := sqlExecutor.ExecuteInternal(ctx, "BEGIN PESSIMISTIC"); err != nil {
+	if _, err := sqlExecutor.ExecuteInternal(internalCtx, "BEGIN PESSIMISTIC"); err != nil {
 		return err
 	}
-	exists, err := procedureExistsInternal(ctx, sqlExecutor, procedurceName, procedurceSchema.L)
+	exists, err := procedureExistsInternal(internalCtx, sqlExecutor, procedurceName, procedurceSchema.L)
 	if err != nil {
 		return err
 	}
@@ -220,10 +283,10 @@ func (e *ProcedureExec) createProcedure(ctx context.Context, s *ast.ProcedureInf
 		}
 		return err
 	}
-	if _, err := sqlExecutor.ExecuteInternal(ctx, sql.String()); err != nil {
+	if _, err := sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
 		return err
 	}
-	if _, err := sqlExecutor.ExecuteInternal(ctx, "commit"); err != nil {
+	if _, err := sqlExecutor.ExecuteInternal(internalCtx, "commit"); err != nil {
 		return err
 	}
 	return nil
@@ -238,13 +301,14 @@ func (e *ShowExec) fetchShowCreateProcdure(ctx context.Context) error {
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(e.DBName.O)
 	}
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	sysSession, err := e.getSysSession()
 	if err != nil {
 		return err
 	}
-	defer e.releaseSysSession(ctx, sysSession)
+	defer e.releaseSysSession(internalCtx, sysSession)
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
-	procedureInfo, err := getProcedureinfo(ctx, sqlExecutor, e.Procedure.Name.O, e.Procedure.Schema.O)
+	procedureInfo, err := getProcedureinfo(internalCtx, sqlExecutor, e.Procedure.Name.O, e.Procedure.Schema.O)
 	if err != nil {
 		return err
 	}
@@ -262,16 +326,17 @@ func (e *ProcedureExec) dropProcedure(ctx context.Context, s *ast.DropProcedureS
 	if !ok {
 		return ErrBadDB.GenWithStackByArgs(procedurceSchema)
 	}
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	sysSession, err := e.getSysSession()
 	if err != nil {
 		return err
 	}
-	defer e.releaseSysSession(ctx, sysSession)
+	defer e.releaseSysSession(internalCtx, sysSession)
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
-	if _, err := sqlExecutor.ExecuteInternal(ctx, "BEGIN PESSIMISTIC"); err != nil {
+	if _, err := sqlExecutor.ExecuteInternal(internalCtx, "BEGIN PESSIMISTIC"); err != nil {
 		return err
 	}
-	exists, err := procedureExistsInternal(ctx, sqlExecutor, procedurceName, procedurceSchema.L)
+	exists, err := procedureExistsInternal(internalCtx, sqlExecutor, procedurceName, procedurceSchema.L)
 	if err != nil {
 		return err
 	}
@@ -286,13 +351,12 @@ func (e *ProcedureExec) dropProcedure(ctx context.Context, s *ast.DropProcedureS
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, "delete from %n.%n where route_schema = %?  and name = %? and type = 'PROCEDURE' ", mysql.SystemDB,
 		mysql.Routines, procedurceSchema.String(), procedurceName)
-	if _, err := sqlExecutor.ExecuteInternal(ctx, sql.String()); err != nil {
+	if _, err := sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
 		return err
 	}
-	if _, err := sqlExecutor.ExecuteInternal(ctx, "commit"); err != nil {
+	if _, err := sqlExecutor.ExecuteInternal(internalCtx, "commit"); err != nil {
 		return err
 	}
-
 	return nil
 }
 

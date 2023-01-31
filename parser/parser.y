@@ -14885,7 +14885,7 @@ CreateProcedureStmt:
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
 		originStmt := $8
-		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:parser.yylval.offset]))
 		startOffset = parser.startOffset(&yyS[yypt-3])
 		if parser.src[startOffset] == '(' {
 			startOffset++

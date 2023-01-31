@@ -232,12 +232,6 @@ func (e *ProcedureExec) createProcedure(ctx context.Context, s *ast.ProcedureInf
 		return err
 	}
 	parameterStr := s.ProcedureParamStr
-	// if len(parameterStr) > 0 && parameterStr[0] == '(' {
-	// 	parameterStr = parameterStr[1:]
-	// }
-	// if len(parameterStr) > 0 && parameterStr[len(parameterStr)-1] == ')' {
-	// 	parameterStr = parameterStr[:len(parameterStr)-1]
-	// }
 
 	bodyStr := s.ProcedureBody.Text()
 	sqlMod := variable.GetSysVar(variable.SQLModeVar)
@@ -608,9 +602,14 @@ func (e *ProcedureExec) callProcedure(ctx context.Context, s *ast.CallStmt) erro
 	if err != nil {
 		return err
 	}
-	switch e.Plan.Procedurebody.(type) {
+	switch x := e.Plan.Procedurebody.(type) {
 	case *plannercore.ProcedureBlock:
-		err := e.realizeFunction(ctx, e.Plan.Procedurebody.(*plannercore.ProcedureBlock))
+		err := e.realizeFunction(ctx, x)
+		if err != nil {
+			return err
+		}
+	case *plannercore.ProcedureSQL:
+		err := e.parseNode(ctx, x)
 		if err != nil {
 			return err
 		}

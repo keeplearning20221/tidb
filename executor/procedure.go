@@ -302,7 +302,7 @@ func (e *ShowExec) fetchShowCreateProcdure(ctx context.Context) error {
 	}
 	defer e.releaseSysSession(internalCtx, sysSession)
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
-	procedureInfo, err := getProcedureinfo(internalCtx, sqlExecutor, e.Procedure.Name.O, e.Procedure.Schema.O)
+	procedureInfo, err := getProcedureinfo(internalCtx, sqlExecutor, e.Procedure.Name.L, e.Procedure.Schema.O)
 	if err != nil {
 		return err
 	}

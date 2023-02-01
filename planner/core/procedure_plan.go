@@ -268,7 +268,7 @@ func (b *PlanBuilder) buildCallProcedure(ctx context.Context, node *ast.CallStmt
 		return nil, ErrNoDB
 	}
 	// get stored procedure name.
-	procedurceName := strings.ToLower(node.Procedure.FnName.String())
+	procedurceName := node.Procedure.FnName.String()
 	// Check if database exists
 	_, ok := b.is.SchemaByName(node.Procedure.Schema)
 	if !ok {

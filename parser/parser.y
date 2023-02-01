@@ -11419,7 +11419,7 @@ Statement:
 |	DoStmt
 |	DropDatabaseStmt
 |	DropImportStmt
-|	DropIndexStmCreateProcedureStmtt
+|	DropIndexStmt
 |	DropTableStmt
 |	DropProcedureStmt
 |	DropPolicyStmt

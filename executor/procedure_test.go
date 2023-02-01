@@ -274,11 +274,11 @@ func TestCallSelect(t *testing.T) {
 		sql := fmt.Sprintf("call insert_data(%d,%d)", i, i)
 		tk.MustExec(sql)
 	}
-	tk.MustExec(`create procedure sp_select() begin
-    select a.id,a.username,a.password,a.age,a.sex from user a where a.id > 10 and a.id < 50;
+	tk.MustExec(`create procedure sp_select() begin 
+    select a.id,a.username,a.password,a.age,a.sex from user a where a.id > 10 and a.id < 50 order by a.id;
 
     select us.subject,count(us.user_id),sum(us.score),avg(us.score),max(us.score),min(us.score) from user_score us
-        where us.score > 90 group by us.subject;
+        where us.score > 90 group by us.subject order by us.subject;
 
     select *,rank() over (partition by subject order by score desc) as ranking from user_score;
 
@@ -306,6 +306,7 @@ func TestCallSelect(t *testing.T) {
     select a.subject,a.id,a.score,a.rownum from (
         select id,subject,score,row_number() over (partition by subject order by score desc) as rownum from user_score) as a
         inner join user_score as b on a.id=b.id where a.rownum<=10 order by a.subject ;
+	
     select *,u.username,ua.address,CONCAT(u.username, "-" ,ua.address) as userinfo,
         avg(us.score) over (order by us.id rows 2 preceding) as current_avg,
         sum(score) over (order by us.id rows 2 preceding) as current_sum from user_score us
@@ -333,6 +334,49 @@ func TestCallSelect(t *testing.T) {
     end;
     `)
 	tk.MustExec(`call sp_select`)
+	require.Equal(t, 15, len(tk.Res))
+	tk.MustQuery("select a.id,a.username,a.password,a.age,a.sex from user a where a.id > 10 and a.id < 50 order by a.id;").Check(tk.Res[0].Rows())
+	tk.MustQuery(`select us.subject,count(us.user_id),sum(us.score),avg(us.score),max(us.score),min(us.score) from user_score us
+	where us.score > 90 group by us.subject order by us.subject;`).Sort().Check(tk.Res[1].Sort().Rows())
+	tk.MustQuery(`select *,rank() over (partition by subject order by score desc) as ranking from user_score;`).Sort().Check(tk.Res[2].Sort().Rows())
+	tk.MustQuery(`select us.*,sum(us.score) over (order by us.id) as current_sum,
+	avg(us.score) over (order by us.id) as current_avg,
+	count(us.score) over (order by us.id) as current_count,
+	max(us.score) over (order by us.id) as current_max,
+	min(us.score) over (order by us.id) as current_min from user_score us;`).Sort().Check(tk.Res[3].Sort().Rows())
+	tk.MustQuery(`select us.*,sum(us.score) over (order by us.id) as current_sum,
+	avg(us.score) over (order by us.id) as current_avg,
+	count(us.score) over (order by us.id) as current_count,
+	max(us.score) over (order by us.id) as current_max,
+	min(us.score) over (order by us.id) as current_min,
+	u.username ,ua.address,CONCAT(u.username, "-" ,ua.address) as userinfo
+	from user_score us left join user u on u.id = us.user_id left join user_address ua on ua.id = us.user_id;`).Sort().Check(tk.Res[4].Sort().Rows())
+	tk.MustQuery(`SELECT DISTINCT us.user_id,u.username ,ua.address,CONCAT(u.username, "-" ,ua.address) as userinfo,
+	sum(us.score) from user_score us left join user u on u.id = us.user_id
+	left join user_address ua on ua.id = us.user_id group by us.user_id,u.username;`).Sort().Check(tk.Res[5].Sort().Rows())
+	tk.MustQuery(`select a.subject,a.id,a.user_id,u.username, a.score,a.rownum from ( select id,user_id,subject,score,row_number() over (order by score desc) as rownum from user_score) as a
+	left join user u on a.user_id = u.id inner join user_score as b on a.id=b.id where a.rownum<=10 order by a.rownum ;`).Sort().Check(tk.Res[6].Sort().Rows())
+	tk.MustQuery(`select a.subject,a.id,a.score,a.rownum from (
+        select id,subject,score,row_number() over (partition by subject order by score desc) as rownum from user_score) as a
+        inner join user_score as b on a.id=b.id where a.rownum<=10 order by a.subject ;`).Sort().Check(tk.Res[7].Sort().Rows())
+	tk.MustQuery(`select *,u.username,ua.address,CONCAT(u.username, "-" ,ua.address) as userinfo,
+	avg(us.score) over (order by us.id rows 2 preceding) as current_avg,
+	sum(score) over (order by us.id rows 2 preceding) as current_sum from user_score us
+	left join user u on u.id = us.user_id left join user_address ua on ua.id = us.user_id;`).Sort().Check(tk.Res[8].Sort().Rows())
+	tk.MustQuery(`select a.id,a.username,a.password,a.age,a.sex from user a where a.id in (select user_id from user_score where score > 90);`).Sort().Check(tk.Res[9].Sort().Rows())
+	tk.MustQuery(`select us.user_id,u.username,us.subject,us.score from user_score us left join user u on u.id = us.user_id
+	where us.score > 90 group by us.user_id,us.subject,us.score;`).Sort().Check(tk.Res[10].Sort().Rows())
+	tk.MustQuery(`select us.user_id,u.username,us.subject,us.score from user_score us join user u on u.id = us.user_id
+	where us.score > 90 group by us.user_id,us.subject,us.score;`).Sort().Check(tk.Res[11].Sort().Rows())
+	tk.MustQuery(`select a.id,a.username,a.password,a.age,a.sex,ad.address,CONCAT(a.username, "-" ,ad.address) as userinfo from user a
+	left join user_address ad on a.id = ad.user_id where a.id > 10 and a.id < 50;`).Sort().Check(tk.Res[12].Sort().Rows())
+	tk.MustQuery(`select a.id,a.username,a.password,a.age,a.sex,ad.score from user a right join user_score ad on a.id = ad.user_id
+	where a.id > 10 and a.id < 50;`).Sort().Check(tk.Res[13].Sort().Rows())
+	tk.MustQuery(`select a.id,a.username,a.password,a.age,a.sex,ad.score from user a
+	left join user_score ad on a.id = ad.user_id where a.id in (select user_id from user_score where score > 90 and score < 99 )
+	union select a.id,a.username,a.password,a.age,a.sex,ad.score from user a
+	left join user_score ad on a.id = ad.user_id
+	where a.id in (select user_id from user_score where score > 30 and score < 70 );`).Sort().Check(tk.Res[14].Sort().Rows())
 }
 
 func runProcedure(t *testing.T, store kv.Storage, procedure, runProcedure string) {

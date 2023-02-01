@@ -486,6 +486,7 @@ func (e *ProcedureExec) execDefalutStmt(ctx context.Context, node ast.StmtNode) 
 
 // execNode implement node execution.
 func (e *ProcedureExec) execNode(ctx context.Context, node ast.StmtNode) error {
+	ast.SetFlag(node)
 	switch node.(type) {
 	case *ast.SelectStmt:
 		err := e.execWithResult(ctx, node)

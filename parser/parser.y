@@ -8613,11 +8613,7 @@ SelectStmt:
 			} else if $7 != nil {
 				lastEnd = yyS[yypt].offset - 1
 			} else {
-				lastEnd = len(src)
-				lastId := strings.Index(src[lastField.Offset:lastEnd], ";")
-				if lastId > 0 {
-					lastEnd = lastId + lastField.Offset
-				}
+				lastEnd = parser.yylval.offset
 				if src[lastEnd-1] == ';' {
 					lastEnd--
 				}

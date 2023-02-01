@@ -203,6 +203,7 @@ func (e *ProcedureExec) checkProcedureExists(ctx context.Context, stmt ast.StmtN
 			}
 		}
 	case *ast.SetStmt:
+		ast.SetFlag(stmt)
 		err := e.execDefalutStmt(ctx, x)
 		if err != nil {
 			return err
@@ -220,7 +221,7 @@ func (e *ProcedureExec) createProcedure(ctx context.Context, s *ast.ProcedureInf
 		e.ctx.GetSessionVars().ClearProcedureVariable()
 	}()
 
-	procedurceName := s.ProcedureName.Name.L
+	procedurceName := s.ProcedureName.Name.String()
 	procedurceSchema := s.ProcedureName.Schema
 	dbInfo, ok := e.is.SchemaByName(procedurceSchema)
 	if !ok {
@@ -302,7 +303,7 @@ func (e *ShowExec) fetchShowCreateProcdure(ctx context.Context) error {
 	}
 	defer e.releaseSysSession(internalCtx, sysSession)
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
-	procedureInfo, err := getProcedureinfo(internalCtx, sqlExecutor, e.Procedure.Name.L, e.Procedure.Schema.O)
+	procedureInfo, err := getProcedureinfo(internalCtx, sqlExecutor, e.Procedure.Name.String(), e.Procedure.Schema.O)
 	if err != nil {
 		return err
 	}
@@ -499,7 +500,13 @@ func (e *ProcedureExec) execNode(ctx context.Context, node ast.StmtNode) error {
 		if err != nil {
 			return err
 		}
-		// TODO: add logic and data
+
+	case *ast.SetOprStmt:
+		err := e.execWithResult(ctx, node)
+		if err != nil {
+			return err
+		}
+	// TODO: add logic and data
 	default:
 		err := e.execDefalutStmt(ctx, node)
 		if err != nil {

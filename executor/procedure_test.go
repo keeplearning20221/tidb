@@ -384,6 +384,25 @@ func dropTable(tk *testkit.TestKit) {
 	tk.MustExec("drop table IF EXISTS `user_address`")
 }
 
+func dropProcedure(tk *testkit.TestKit) {
+	tk.MustExec("DROP PROCEDURE user_pro")
+	tk.MustExec("DROP PROCEDURE score_pro")
+	tk.MustExec("DROP PROCEDURE user_score_rank_pro")
+	tk.MustExec("DROP PROCEDURE user_win_pro")
+	tk.MustExec("DROP PROCEDURE user_win_join_pro")
+	tk.MustExec("DROP PROCEDURE user_join_groupBy_pro")
+	tk.MustExec("DROP PROCEDURE user_score_top10_pro")
+	tk.MustExec("DROP PROCEDURE user_fun_pro")
+	tk.MustExec("DROP PROCEDURE user_sub_sel_pro")
+	tk.MustExec("DROP PROCEDURE user_left_join_groupBy_pro")
+	tk.MustExec("DROP PROCEDURE user_join_pro")
+	tk.MustExec("DROP PROCEDURE user_left_join_pro")
+	tk.MustExec("DROP PROCEDURE user_right_join_pro")
+	tk.MustExec("DROP PROCEDURE union_pro")
+	tk.MustExec("DROP PROCEDURE user_top10_pro")
+	tk.MustExec("DROP PROCEDURE user_info_pro")
+}
+
 func initEnv(tk *testkit.TestKit) {
 	dropTable(tk)
 	createTable(tk)
@@ -412,4 +431,5 @@ func initEnv(tk *testkit.TestKit) {
 
 func destroyEnv(tk *testkit.TestKit) {
 	dropTable(tk)
+	dropProcedure(tk)
 }

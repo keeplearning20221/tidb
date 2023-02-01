@@ -315,7 +315,7 @@ func (e *ShowExec) fetchShowCreateProcdure(ctx context.Context) error {
 
 // dropProcedure delete stored procedure.
 func (e *ProcedureExec) dropProcedure(ctx context.Context, s *ast.DropProcedureStmt) error {
-	procedurceName := s.ProcedureName.Name.L
+	procedurceName := s.ProcedureName.Name.String()
 	procedurceSchema := s.ProcedureName.Schema
 	_, ok := e.is.SchemaByName(procedurceSchema)
 	if !ok {
@@ -331,7 +331,7 @@ func (e *ProcedureExec) dropProcedure(ctx context.Context, s *ast.DropProcedureS
 	if _, err := sqlExecutor.ExecuteInternal(internalCtx, "BEGIN PESSIMISTIC"); err != nil {
 		return err
 	}
-	exists, err := procedureExistsInternal(internalCtx, sqlExecutor, procedurceName, procedurceSchema.L)
+	exists, err := procedureExistsInternal(internalCtx, sqlExecutor, procedurceName, procedurceSchema.String())
 	if err != nil {
 		return err
 	}

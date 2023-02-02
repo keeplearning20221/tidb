@@ -380,12 +380,16 @@ func TestCallSelect(t *testing.T) {
 	where a.id in (select user_id from user_score where score > 30 and score < 70 );`).Sort().Check(tk.Res[14].Sort().Rows())
 }
 
-func runProcedure(t *testing.T, store kv.Storage, procedure, runProcedure string) {
+func runProcedure(t *testing.T, store kv.Storage, procedure, runProcedure, selectSQL string) {
 	tk := testkit.NewTestKit(t, store)
 	tk.InProcedure()
 	tk.MustExec("use test")
 	tk.MustExec(procedure)
 	tk.MustExec(runProcedure)
+	pRSSize := len(tk.Res[0].Rows())
+	sRSSize := len(tk.MustQuery(selectSQL).Rows())
+	require.Equal(t, pRSSize, sRSSize)
+
 }
 
 func TestSelect(t *testing.T) {
@@ -396,78 +400,89 @@ func TestSelect(t *testing.T) {
 	initEnv(tk)
 
 	testcases := []struct {
-		callSQL string
-		SQL     string
+		name      string
+		selectSQL string
 	}{
 		{
-			"call user_pro()",
-			"create procedure user_pro() begin select a.id,a.username,a.password,a.age,a.sex from user a where a.id > 10 and a.id < 50; end",
+			"user_pro",
+			"select a.id,a.username,a.password,a.age,a.sex from user a where a.id > 10 and a.id < 50",
 		},
 		{
-			"call score_pro()",
-			"create procedure score_pro() begin select us.subject,count(us.user_id),sum(us.score),avg(us.score),max(us.score),min(us.score) from user_score us where us.score > 90 group by us.subject; end",
+			"score_pro",
+			"select us.subject,count(us.user_id),sum(us.score),avg(us.score),max(us.score),min(us.score) from user_score us where us.score > 90 group by us.subject",
 		},
 		{
-			"call user_score_rank_pro()",
-			"create procedure user_score_rank_pro() begin select *,rank() over (partition by subject order by score desc) as ranking from user_score; end",
+			"user_score_rank_pro",
+			"select *,rank() over (partition by subject order by score desc) as ranking from user_score",
 		},
 		{
-			"call user_win_pro()",
-			"create procedure user_win_pro() begin select us.*,sum(us.score) over (order by us.id) as current_sum,avg(us.score) over (order by us.id) as current_avg,count(us.score) over (order by us.id) as current_count,max(us.score) over (order by us.id) as current_max,min(us.score) over (order by us.id) as current_min from user_score us; end",
+			"user_win_pro",
+			"select us.*,sum(us.score) over (order by us.id) as current_sum,avg(us.score) over (order by us.id) as current_avg,count(us.score) over (order by us.id) as current_count,max(us.score) over (order by us.id) as current_max,min(us.score) over (order by us.id) as current_min from user_score us",
 		},
 		{
-			"call user_win_join_pro()",
-			"create procedure user_win_join_pro() begin select us.*,sum(us.score) over (order by us.id) as current_sum,avg(us.score) over (order by us.id) as current_avg,count(us.score) over (order by us.id) as current_count,max(us.score) over (order by us.id) as current_max,min(us.score) over (order by us.id) as current_min,u.username ,ua.address,CONCAT(u.username, \"-\" ,ua.address) as userinfo from user_score us left join user u on u.id = us.user_id left join user_address ua on ua.id = us.user_id; end",
+			"user_win_join_pro",
+			"select us.*,sum(us.score) over (order by us.id) as current_sum,avg(us.score) over (order by us.id) as current_avg,count(us.score) over (order by us.id) as current_count,max(us.score) over (order by us.id) as current_max,min(us.score) over (order by us.id) as current_min,u.username ,ua.address,CONCAT(u.username, \"-\" ,ua.address) as userinfo from user_score us left join user u on u.id = us.user_id left join user_address ua on ua.id = us.user_id",
 		},
 		{
-			"call user_join_groupBy_pro()",
-			"create procedure user_join_groupBy_pro() begin SELECT DISTINCT us.user_id,u.username ,ua.address,CONCAT(u.username, \"-\" ,ua.address) as userinfo,sum(us.score) from user_score us left join user u on u.id = us.user_id left join user_address ua on ua.id = us.user_id group by us.user_id,u.username; end",
+			"user_join_groupBy_pro",
+			"SELECT DISTINCT us.user_id,u.username ,ua.address,CONCAT(u.username, \"-\" ,ua.address) as userinfo,sum(us.score) from user_score us left join user u on u.id = us.user_id left join user_address ua on ua.id = us.user_id group by us.user_id,u.username",
 		},
 		{
-			"call user_score_top10_pro()",
-			"create procedure user_score_top10_pro() begin select a.subject,a.id,a.user_id,u.username, a.score,a.rownum from (select id,user_id,subject,score,row_number() over (order by score desc) as rownum from user_score) as a left join user u on a.user_id = u.id inner join user_score as b on a.id=b.id where a.rownum<=10 order by a.rownum; end",
+			"user_score_top10_pro",
+			"select a.subject,a.id,a.user_id,u.username, a.score,a.rownum from (select id,user_id,subject,score,row_number() over (order by score desc) as rownum from user_score) as a left join user u on a.user_id = u.id inner join user_score as b on a.id=b.id where a.rownum<=10 order by a.rownum",
 		},
 		{
-			"call user_fun_pro()",
-			"create procedure user_fun_pro() select *,u.username,ua.address,CONCAT(u.username, \"-\" ,ua.address) as userinfo,avg(us.score) over (order by us.id rows 2 preceding) as current_avg, sum(score) over (order by us.id rows 2 preceding) as current_sum from user_score us left join user u on u.id = us.user_id left join user_address ua on ua.id = us.user_id",
+			"user_fun_pro",
+			"select *,u.username,ua.address,CONCAT(u.username, \"-\" ,ua.address) as userinfo,avg(us.score) over (order by us.id rows 2 preceding) as current_avg, sum(score) over (order by us.id rows 2 preceding) as current_sum from user_score us left join user u on u.id = us.user_id left join user_address ua on ua.id = us.user_id",
 		},
 		{
-			"call user_sub_sel_pro()",
-			"create procedure user_sub_sel_pro() select a.id,a.username,a.password,a.age,a.sex from user a where a.id in (select user_id from user_score where score > 90)",
+			"user_sub_sel_pro",
+			"select a.id,a.username,a.password,a.age,a.sex from user a where a.id in (select user_id from user_score where score > 90)",
 		},
 		{
-			"call user_left_join_groupBy_pro()",
-			"create procedure user_left_join_groupBy_pro() select us.user_id,u.username,us.subject,us.score from user_score us left join user u on u.id = us.user_id where us.score > 90 group by us.user_id,us.subject,us.score",
+			"user_left_join_groupBy_pro",
+			"select us.user_id,u.username,us.subject,us.score from user_score us left join user u on u.id = us.user_id where us.score > 90 group by us.user_id,us.subject,us.score",
 		},
 		{
-			"call user_join_pro()",
-			"create procedure user_join_pro() select us.user_id,u.username,us.subject,us.score from user_score us join user u on u.id = us.user_id\nwhere us.score > 90 group by us.user_id,us.subject,us.score",
+			"user_join_pro",
+			"select us.user_id,u.username,us.subject,us.score from user_score us join user u on u.id = us.user_id\nwhere us.score > 90 group by us.user_id,us.subject,us.score",
 		},
 		{
-			"call user_left_join_pro()",
-			"create procedure user_left_join_pro() select a.id,a.username,a.password,a.age,a.sex,ad.address,CONCAT(a.username, \"-\" ,ad.address) as userinfo from user a left join user_address ad on a.id = ad.user_id where a.id > 10 and a.id < 50",
+			"user_left_join_pro",
+			"select a.id,a.username,a.password,a.age,a.sex,ad.address,CONCAT(a.username, \"-\" ,ad.address) as userinfo from user a left join user_address ad on a.id = ad.user_id where a.id > 10 and a.id < 50",
 		},
 		{
-			"call user_right_join_pro()",
-			"create procedure user_right_join_pro() select a.id,a.username,a.password,a.age,a.sex,ad.score from user a right join user_score ad on a.id = ad.user_id where a.id > 10 and a.id < 50",
+			"user_right_join_pro",
+			"select a.id,a.username,a.password,a.age,a.sex,ad.score from user a right join user_score ad on a.id = ad.user_id where a.id > 10 and a.id < 50",
 		},
 		{
-			"call union_pro()",
-			"create procedure union_pro() select a.id,a.username,a.password,a.age,a.sex,ad.score from user a left join user_score ad on a.id = ad.user_id where a.id in (select user_id from user_score where score > 90 and score < 99 ) union select a.id,a.username,a.password,a.age,a.sex,ad.score from user a left join user_score ad on a.id = ad.user_id where a.id in (select user_id from user_score where score > 30 and score < 70 )",
+			"union_pro",
+			"select a.id,a.username,a.password,a.age,a.sex,ad.score from user a left join user_score ad on a.id = ad.user_id where a.id in (select user_id from user_score where score > 90 and score < 99 ) union select a.id,a.username,a.password,a.age,a.sex,ad.score from user a left join user_score ad on a.id = ad.user_id where a.id in (select user_id from user_score where score > 30 and score < 70 )",
 		},
 		{
-			"call user_top10_pro()",
-			"create procedure user_top10_pro() select a.subject,a.id,a.score,a.rownum from (select id,subject,score,row_number() over (partition by subject order by score desc) as rownum from user_score) as a inner join user_score as b on a.id=b.id where a.rownum<=10 order by a.subject",
+			"user_top10_pro",
+			"select a.subject,a.id,a.score,a.rownum from (select id,subject,score,row_number() over (partition by subject order by score desc) as rownum from user_score) as a inner join user_score as b on a.id=b.id where a.rownum<=10 order by a.subject",
 		},
 		{
-			"call user_info_pro()",
-			"create procedure user_info_pro() select rank() over (partition by user_info.subject_1 order by user_info.score_1 desc) as ranking,avg(user_info.score_1) over (order by user_info.id rows 2 preceding) as current_avg,sum(user_info.score_1) over (order by user_info.id rows 2 preceding) as current_sum,sum(user_info.score_1) over (order by user_info.id) as score_1_sum,avg(user_info.score_1) over (order by user_info.id) as score_1_avg,count(user_info.score_1) over (order by user_info.id) as score_1_count,max(user_info.score_1) over (order by user_info.id) as score_1_max,min(user_info.score_1) over (order by user_info.id) as score_1_min,user_info.* from (select u.id,u.username,us1.subject as subject_1,us1.score as score_1,us2.subject as subject_2,us2.score as score_2,us3.subject as subject_3,us3.score as score_3,us4.subject as subject_4,us4.score as score_4,us5.subject as subject_5,us5.score as score_5,ua.address from user u left join user_score us1 on us1.user_id = u.id and us1.subject = 1 left join user_score us2 on us2.user_id = u.id and us2.subject = 2 left join user_score us3 on us3.user_id = u.id and us3.subject = 3 left join user_score us4 on us4.user_id = u.id and us4.subject = 4 left join user_score us5 on us5.user_id = u.id and us5.subject = 5 left join test.user_address ua on u.id = ua.user_id) as user_info",
+			"user_info_pro",
+			"select rank() over (partition by user_info.subject_1 order by user_info.score_1 desc) as ranking,avg(user_info.score_1) over (order by user_info.id rows 2 preceding) as current_avg,sum(user_info.score_1) over (order by user_info.id rows 2 preceding) as current_sum,sum(user_info.score_1) over (order by user_info.id) as score_1_sum,avg(user_info.score_1) over (order by user_info.id) as score_1_avg,count(user_info.score_1) over (order by user_info.id) as score_1_count,max(user_info.score_1) over (order by user_info.id) as score_1_max,min(user_info.score_1) over (order by user_info.id) as score_1_min,user_info.* from (select u.id,u.username,us1.subject as subject_1,us1.score as score_1,us2.subject as subject_2,us2.score as score_2,us3.subject as subject_3,us3.score as score_3,us4.subject as subject_4,us4.score as score_4,us5.subject as subject_5,us5.score as score_5,ua.address from user u left join user_score us1 on us1.user_id = u.id and us1.subject = 1 left join user_score us2 on us2.user_id = u.id and us2.subject = 2 left join user_score us3 on us3.user_id = u.id and us3.subject = 3 left join user_score us4 on us4.user_id = u.id and us4.subject = 4 left join user_score us5 on us5.user_id = u.id and us5.subject = 5 left join test.user_address ua on u.id = ua.user_id) as user_info",
 		},
 	}
 	for _, tc := range testcases {
-		runProcedure(t, store, tc.SQL, tc.callSQL)
+		pSql, cSQL := procedureSQL(tc.name, tc.selectSQL)
+		runProcedure(t, store, pSql, cSQL, tc.selectSQL)
 	}
 	destroyEnv(tk)
+}
+
+func procedureSQL(procedureName, selectSQL string) (string, string) {
+	sqlTemplate := "create procedure procedureName() begin selectSQL; end"
+	sqlTemplate = strings.Replace(sqlTemplate, "procedureName", procedureName, 1)
+	sqlTemplate = strings.Replace(sqlTemplate, "selectSQL", selectSQL, 1)
+
+	callSqlTemplate := "call procedureName()"
+	callSqlTemplate = strings.Replace(callSqlTemplate, "procedureName", procedureName, 1)
+	return sqlTemplate, callSqlTemplate
 }
 
 func createTable(tk *testkit.TestKit) {

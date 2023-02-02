@@ -446,7 +446,7 @@ func TestSelect(t *testing.T) {
 			"user_sub_sel_pro",
 			"select a.id,a.username,a.password,a.age,a.sex " +
 				"from user a " +
-				"where a.id in (select user_id from user_score where score > 90)",
+				"where a.id in (select user_id from user_score where score > 90) order by a.age desc,a.id",
 		},
 		{
 			"user_left_join_groupBy_pro",
@@ -537,12 +537,12 @@ func TestSelect(t *testing.T) {
 	}
 	for _, tc := range testcases {
 		pSql, cSQL := procedureSQL(tc.name, tc.selectSQL)
-		runProcedure(t, store, pSql, cSQL, tc.selectSQL)
+		runTestCases(t, store, pSql, cSQL, tc.selectSQL)
 	}
 	destroyEnv(tk)
 }
 
-func runProcedure(t *testing.T, store kv.Storage, procedure, runProcedure, selectSQL string) {
+func runTestCases(t *testing.T, store kv.Storage, procedure, runProcedure, selectSQL string) {
 	tk := testkit.NewTestKit(t, store)
 	tk.InProcedure()
 	tk.MustExec("use test")

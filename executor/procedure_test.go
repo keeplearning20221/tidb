@@ -381,18 +381,6 @@ func TestCallSelect(t *testing.T) {
 	where a.id in (select user_id from user_score where score > 30 and score < 70 );`).Sort().Check(tk.Res[14].Sort().Rows())
 }
 
-func runProcedure(t *testing.T, store kv.Storage, procedure, runProcedure, selectSQL string) {
-	tk := testkit.NewTestKit(t, store)
-	tk.InProcedure()
-	tk.MustExec("use test")
-	tk.MustExec(procedure)
-	tk.MustExec(runProcedure)
-	pRSSize := len(tk.Res[0].Rows())
-	sRSSize := len(tk.MustQuery(selectSQL).Rows())
-	require.Equal(t, pRSSize, sRSSize)
-
-}
-
 func TestSelect(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -407,7 +395,7 @@ func TestSelect(t *testing.T) {
 		{
 			"user_pro",
 			"select a.id,a.username,a.password,a.age,a.sex " +
-				"from user a where a.id > 10 and a.id < 50",
+				"from user a where a.id > 10 and a.id < 50 order by id",
 		},
 		{
 			"score_pro",
@@ -436,7 +424,7 @@ func TestSelect(t *testing.T) {
 			"user_join_groupBy_pro",
 			"SELECT DISTINCT us.user_id,u.username ,ua.address,CONCAT(u.username, \"-\" ,ua.address) as userinfo," +
 				"sum(us.score) from user_score us left join user u on u.id = us.user_id left join user_address ua on ua.id = us.user_id " +
-				"group by us.user_id,u.username",
+				"group by us.user_id,u.username order by us.user_id",
 		},
 		{
 			"user_score_top10_pro",
@@ -453,7 +441,7 @@ func TestSelect(t *testing.T) {
 				"avg(us.score) over (order by us.id rows 2 preceding) as current_avg, " +
 				"sum(score) over (order by us.id rows 2 preceding) as current_sum " +
 				"from user_score us left join user u on u.id = us.user_id " +
-				"left join user_address ua on ua.id = us.user_id",
+				"left join user_address ua on ua.id = us.user_id order by u.id",
 		},
 		{
 			"user_sub_sel_pro",
@@ -463,17 +451,21 @@ func TestSelect(t *testing.T) {
 		},
 		{
 			"user_left_join_groupBy_pro",
-			"select us.user_id,u.username,us.subject,us.score " +
+			"select users.subject,sum(users.score) " +
+				"from (" +
+				"select us.user_id,u.username,us.subject,us.score " +
 				"from user_score us " +
-				"left join user u on u.id = us.user_id where us.score > 90 " +
-				"group by us.user_id,us.subject,us.score",
+				"left join user u on u.id = us.user_id where us.score > 90 ) as users " +
+				"group by users.subject",
 		},
 		{
 			"user_join_pro",
-			"select us.user_id,u.username,us.subject,us.score " +
+			"select users.subject,sum(users.score) " +
+				"from (" +
+				"select us.user_id,u.username,us.subject,us.score " +
 				"from user_score us " +
-				"join user u on u.id = us.user_id " +
-				"where us.score > 90 group by us.user_id,us.subject,us.score",
+				"join user u on u.id = us.user_id where us.score > 90 ) as users " +
+				"group by users.subject",
 		},
 		{
 			"user_left_join_pro",
@@ -481,27 +473,37 @@ func TestSelect(t *testing.T) {
 				"CONCAT(a.username, \"-\" ,ad.address) as userinfo " +
 				"from user a " +
 				"left join user_address ad on a.id = ad.user_id " +
-				"where a.id > 10 and a.id < 50",
+				"where a.id > 10 and a.id < 50  order by a.id",
 		},
 		{
 			"user_right_join_pro",
 			"select a.id,a.username,a.password,a.age,a.sex,ad.score " +
 				"from user a " +
 				"right join user_score ad on a.id = ad.user_id " +
-				"where a.id > 10 and a.id < 50",
+				"where a.id > 10 and a.id < 50 " +
+				"order by ad.score desc,a.age",
 		},
 		{
 			"union_pro",
-			"select a.id,a.username,a.password,a.age,a.sex,ad.score " +
-				"from user a left join user_score ad on a.id = ad.user_id " +
+			"select * " +
+				"from (" +
+				"select a.id,a.username,a.password,a.age,a.sex,ad.score " +
+				"from user a " +
+				"left join user_score ad on a.id = ad.user_id " +
 				"where a.id in (" +
 				"select user_id " +
 				"from user_score " +
-				"where score > 90 and score < 99 ) " +
+				"where score > 90 and score < 99 " +
+				"order by ad.score desc,a.age) " +
 				"union " +
 				"select a.id,a.username,a.password,a.age,a.sex,ad.score " +
-				"from user a left join user_score ad on a.id = ad.user_id " +
-				"where a.id in (select user_id from user_score where score > 30 and score < 70 )",
+				"from user a " +
+				"left join user_score ad on a.id = ad.user_id " +
+				"where a.id in (" +
+				"select user_id " +
+				"from user_score " +
+				"where score > 30 and score < 70)) user_info " +
+				"order by user_info.score desc,user_info.age",
 		},
 		{
 			"user_top10_pro",
@@ -539,6 +541,19 @@ func TestSelect(t *testing.T) {
 		runProcedure(t, store, pSql, cSQL, tc.selectSQL)
 	}
 	destroyEnv(tk)
+}
+
+func runProcedure(t *testing.T, store kv.Storage, procedure, runProcedure, selectSQL string) {
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec(procedure)
+	tk.MustExec(runProcedure)
+	procedureRows := tk.Res[0].Rows()
+	selectRows := tk.MustQuery(selectSQL).Rows()
+	require.Equal(t, len(procedureRows), len(selectRows))
+	require.Equal(t, procedureRows[0], selectRows[0])
+
 }
 
 func procedureSQL(procedureName, selectSQL string) (string, string) {

@@ -957,7 +957,16 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (Plan, error
 			if cn, ok2 := vars.Value.(*ast.ColumnNameExpr); ok2 && cn.Name.Table.L == "" {
 				// Convert column name expression to string value expression.
 				char, col := b.ctx.GetSessionVars().GetCharsetInfo()
-				vars.Value = ast.NewValueExpr(cn.Name.Name.O, char, col)
+				// support set a=b in sp
+				_, val, notFind, err := b.ctx.GetSessionVars().GetProcedureVariable(cn.Name.Name.O)
+				if err != nil {
+					return nil, err
+				}
+				if !notFind {
+					vars.Value = ast.NewValueExpr(val.GetValue(), char, col)
+				} else {
+					vars.Value = ast.NewValueExpr(cn.Name.Name.O, char, col)
+				}
 			}
 			mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 			var err error

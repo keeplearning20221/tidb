@@ -149,7 +149,8 @@ func getProcedureinfo(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name
 		return nil, errors.New("Multiple stored procedures found in table " + mysql.Routines)
 	}
 	procedurebodyInfo := &plannercore.ProcedurebodyInfo{}
-	procedurebodyInfo.Procedurebody = " CREATE PROCEDURE `" + name + "`(" + rows[0].GetString(3) + ") " + rows[0].GetString(2)
+	procedurebodyInfo.Name = rows[0].GetString(0)
+	procedurebodyInfo.Procedurebody = " CREATE PROCEDURE `" + rows[0].GetString(0) + "`(" + rows[0].GetString(3) + ") " + rows[0].GetString(2)
 	procedurebodyInfo.SqlMode = rows[0].GetSet(1).String()
 	procedurebodyInfo.CharacterSetClient = rows[0].GetString(4)
 	procedurebodyInfo.CollationConnection = rows[0].GetString(5)
@@ -157,9 +158,33 @@ func getProcedureinfo(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name
 	return procedurebodyInfo, nil
 }
 
-func (e *ProcedureExec) newEmptyVars(ctx context.Context, name string, DeclType *types.FieldType) error {
-	datum := types.NewDatum(0)
-	err := e.ctx.GetSessionVars().NewProcedureVariable(name, datum, DeclType)
+func (e *ProcedureExec) newEmptyVars(ctx context.Context, name string, tp *types.FieldType) error {
+	var datum types.Datum
+	switch tp.GetType() {
+	case mysql.TypeTiny, mysql.TypeInt24, mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
+		datum = types.NewDatum(0)
+	case mysql.TypeTimestamp, mysql.TypeDatetime:
+		datum = types.NewDatum("2023-02-04 11:11:16")
+	case mysql.TypeDate:
+		datum = types.NewDatum("2023-02-04")
+	case mysql.TypeDuration:
+		datum = types.NewDatum("11:11:16")
+	case mysql.TypeYear:
+		datum = types.NewDatum("2023")
+	case mysql.TypeJSON:
+		datum = types.NewDatum("null")
+	case mysql.TypeEnum:
+		datum = types.NewDatum(tp.GetElem(0))
+	case mysql.TypeString:
+		datum = types.NewDatum("")
+	default:
+		datum = types.NewDatum("")
+	}
+	varVar, err := datum.Clone().ConvertTo(e.ctx.GetSessionVars().StmtCtx, tp)
+	if err != nil {
+		return err
+	}
+	err = e.ctx.GetSessionVars().NewProcedureVariable(name, varVar, tp)
 	if err != nil {
 		return err
 	}
@@ -254,7 +279,7 @@ func (e *ProcedureExec) createProcedure(ctx context.Context, s *ast.ProcedureInf
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, "insert into mysql.routines (route_schema, name, type, definition, definition_utf8, parameter_str,")
 	sqlexec.MustFormatSQL(sql, "is_deterministic, sql_data_access, security_type, definer, sql_mode, character_set_client, connection_collation, schema_collation, created, last_altered, comment, ")
-	sqlexec.MustFormatSQL(sql, " external_language) values (%?, %?, 'PROCEDURE', %?, %?, %?, 0, 'CONTAINS SQL', 'DEFINER', %?, %?, %?, %?, %?, now(), now(),  '', 'SQL') ;", procedurceSchema.L, procedurceName,
+	sqlexec.MustFormatSQL(sql, " external_language) values (%?, %?, 'PROCEDURE', %?, %?, %?, 0, 'CONTAINS SQL', 'DEFINER', %?, %?, %?, %?, %?, now(), now(),  '', 'SQL') ;", procedurceSchema.String(), procedurceName,
 		bodyStr, bodyStr, parameterStr, userInfo, sqlMod.Value, chs.Value, sessionCollation, dbInfo.Collate)
 	sysSession, err := e.getSysSession()
 	if err != nil {
@@ -308,7 +333,7 @@ func (e *ShowExec) fetchShowCreateProcdure(ctx context.Context) error {
 		return err
 	}
 	//names = []string{"Procedure", "sql_mode", "Create Procedure", "character_set_client", "collation_connection", "Database Collation"}
-	e.appendRow([]interface{}{e.Procedure.Name.O, procedureInfo.SqlMode, procedureInfo.Procedurebody, procedureInfo.CharacterSetClient,
+	e.appendRow([]interface{}{procedureInfo.Name, procedureInfo.SqlMode, procedureInfo.Procedurebody, procedureInfo.CharacterSetClient,
 		procedureInfo.CollationConnection, procedureInfo.ShemaCollation})
 	return nil
 }
@@ -541,33 +566,39 @@ func (e *ProcedureExec) callParam(ctx context.Context, s *ast.CallStmt) error {
 			name := s.Procedure.Args[i].(*ast.VariableExpr).Name
 			if (param.ParamType == ast.MODE_IN) || (param.ParamType == ast.MODE_INOUT) {
 				err := e.inParam(ctx, param, name)
-				return err
+				if err != nil {
+					return err
+				}
 			}
-			if (param.ParamType == ast.MODE_OUT) || (param.ParamType == ast.MODE_INOUT) {
+			if param.ParamType == ast.MODE_INOUT {
 				_, ok := e.outParam[param.DeclName]
 				if ok {
 					return ErrSpDupParam.GenWithStackByArgs(param.DeclName)
 				}
 				e.outParam[param.DeclName] = name
 			}
+			if param.ParamType == ast.MODE_OUT {
+				err := e.newEmptyVars(ctx, param.DeclName, param.DeclType)
+				if err != nil {
+					return err
+				}
+				e.outParam[param.DeclName] = name
+			}
 
+		// to do: support pseudo-variable in BEFORE trigger
 		default:
 			datum, err := e.getDarumVar(param.DeclType, param.DeclInput)
 			if err != nil {
 				return err
 			}
-			if (param.ParamType == ast.MODE_IN) || (param.ParamType == ast.MODE_INOUT) {
+			if param.ParamType == ast.MODE_IN {
 				err = e.ctx.GetSessionVars().NewProcedureVariable(param.DeclName, *datum, param.DeclType)
 				if err != nil {
 					return err
 				}
 			}
 			if (param.ParamType == ast.MODE_OUT) || (param.ParamType == ast.MODE_INOUT) {
-				_, ok := e.outParam[param.DeclName]
-				if ok {
-					return ErrSpDupParam.GenWithStackByArgs(param.DeclName)
-				}
-				e.outParam[param.DeclName] = param.DeclName
+				return ErrSpNotVarArg.GenWithStackByArgs(i, s.Procedure.Schema.String()+"."+s.Procedure.FnName.String())
 			}
 		}
 	}
@@ -576,7 +607,7 @@ func (e *ProcedureExec) callParam(ctx context.Context, s *ast.CallStmt) error {
 
 // outParams handle out parameters.
 func (e *ProcedureExec) outParams() error {
-	for _, key := range e.outParam {
+	for key, v := range e.outParam {
 		varType, datum, notFind, err := e.ctx.GetSessionVars().GetProcedureVariable(key)
 		if err != nil {
 			return err
@@ -584,8 +615,8 @@ func (e *ProcedureExec) outParams() error {
 		if notFind {
 			continue
 		}
-		e.ctx.GetSessionVars().SetUserVarVal(key, datum)
-		e.ctx.GetSessionVars().SetUserVarType(key, varType)
+		e.ctx.GetSessionVars().SetUserVarVal(v, datum)
+		e.ctx.GetSessionVars().SetUserVarType(v, varType)
 	}
 	return nil
 }
@@ -606,6 +637,12 @@ func (e *ProcedureExec) callProcedure(ctx context.Context, s *ast.CallStmt) erro
 		e.ctx.GetSessionVars().OutCallProcedure()
 		e.ctx.GetSessionVars().ClearProcedureVariable()
 	}()
+	sc := e.ctx.GetSessionVars().StmtCtx
+	vars := e.ctx.GetSessionVars()
+	sc.TruncateAsWarning = !vars.StrictSQLMode
+	sc.DividedByZeroAsWarning = !vars.StrictSQLMode
+	sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
+	sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || sc.AllowInvalidDate
 	err := e.callParam(ctx, s)
 	if err != nil {
 		return err

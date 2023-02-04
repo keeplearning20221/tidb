@@ -439,6 +439,7 @@ func (e *ProcedureExec) getDarumVar(sqlType *types.FieldType, defaultVar express
 	var err error
 	if defaultVar == nil {
 		datum = types.NewDatum("")
+		return &datum, nil
 	} else {
 		datum, err = defaultVar.Eval(chunk.Row{})
 		if err != nil {
@@ -460,9 +461,16 @@ func (e *ProcedureExec) createVariable(ctx context.Context, pval *plannercore.Pr
 		return nil, err
 	}
 	for _, name := range pval.DeclNames {
-		err = e.ctx.GetSessionVars().NewProcedureVariable(name, *datum, pval.DeclType)
-		if err != nil {
-			return nil, err
+		if pval.DeclDefault != nil {
+			err = e.newEmptyVars(ctx, name, pval.DeclType)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			err = e.ctx.GetSessionVars().NewProcedureVariable(name, *datum, pval.DeclType)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	return pval.DeclNames, nil
@@ -598,7 +606,7 @@ func (e *ProcedureExec) callParam(ctx context.Context, s *ast.CallStmt) error {
 				}
 			}
 			if (param.ParamType == ast.MODE_OUT) || (param.ParamType == ast.MODE_INOUT) {
-				return ErrSpNotVarArg.GenWithStackByArgs(i, s.Procedure.Schema.String()+"."+s.Procedure.FnName.String())
+				return ErrSpNotVarArg.GenWithStackByArgs(i+1, s.Procedure.Schema.String()+"."+s.Procedure.FnName.String())
 			}
 		}
 	}

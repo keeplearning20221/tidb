@@ -631,7 +631,7 @@ func destroyEnv(tk *testkit.TestKit) {
 	dropProcedure(tk)
 }
 
-func TestCallVariables(t *testing.T) {
+func TestCallInOutParam(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.InProcedure()
@@ -691,7 +691,7 @@ func TestCallVariables(t *testing.T) {
 	tk.Res[0].Check(testkit.Rows("ftygipjo"))
 	tk.ClearProcedureRes()
 
-	tk.MustExec("create PROCEDURE var3(in sp1 varchar(10),in sp2 float) begin select sp1,sp2 ; end;")
+	tk.MustExec("create PROCEDURE var3(sp1 varchar(10),in sp2 float) begin select sp1,sp2 ; end;")
 	tk.MustExec("call var3(1,2.1)")
 	tk.Res[0].Check(testkit.Rows("1 2.1"))
 	tk.ClearProcedureRes()
@@ -704,9 +704,72 @@ func TestCallVariables(t *testing.T) {
 	tk.Res[0].Check(testkit.Rows("2023-02-03 11:34:22"))
 	tk.ClearProcedureRes()
 	tk.MustQuery("select @a").Check(testkit.Rows("2023-02-03 11:34:22"))
+	// Enum
 	tk.MustExec("create PROCEDURE var5(in sp1 Enum('a','b','c'),out sp2  Enum('a','b','c')) begin select sp1; set sp2 = sp1; end;")
 	tk.MustExec("call var5('b',@a)")
 	tk.Res[0].Check(testkit.Rows("b"))
 	tk.ClearProcedureRes()
 	tk.MustQuery("select @a").Check(testkit.Rows("b"))
+	// inout
+	tk.MustExec("create PROCEDURE var6(inout sp1 varchar(100)) begin select sp1; end;")
+	tk.MustGetErrCode("call var6('b')", 1414)
+	tk.MustGetErrCode("call var6(now())", 1414)
+	tk.MustExec("set @a =cd; call var6(@a)")
+	tk.Res[0].Check(testkit.Rows("cd"))
+	tk.ClearProcedureRes()
+	tk.MustQuery("select @a").Check(testkit.Rows("cd"))
+	// SET
+	tk.MustExec("create PROCEDURE var7(in sp1 SET('a','b','c'),out sp2  SET('a','b','c')) begin select sp1; set sp2 = sp1; end;")
+	tk.MustExec("call var7('b,a',@a)")
+	tk.Res[0].Check(testkit.Rows("a,b"))
+	tk.ClearProcedureRes()
+	// timestamp
+	tk.MustExec("create PROCEDURE var8(in sp1 timestamp,out sp2  timestamp) begin select sp1; set sp2 = sp1; end;")
+	tk.MustExec("set timestamp = 1675499582;call var8(now(),@a)")
+	tk.Res[0].Check(testkit.Rows("2023-02-04 16:33:02"))
+	tk.ClearProcedureRes()
+	tk.MustQuery("select @a").Check(testkit.Rows("2023-02-04 16:33:02"))
+}
+
+func TestCallVarParam(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	// int
+	sql := `create PROCEDURE var1() begin declare id int;set id = 1; select id; end;`
+	tk.MustExec(sql)
+	tk.MustExec("call var1")
+	tk.Res[0].Check(testkit.Rows("1"))
+	tk.ClearProcedureRes()
+	sql = `create PROCEDURE var2() begin declare id varchar(10);set id = 1; select id; end;`
+	tk.MustExec(sql)
+	tk.MustExec("call var2")
+	tk.Res[0].Check(testkit.Rows("1"))
+	tk.ClearProcedureRes()
+	sql = `create PROCEDURE var3() begin declare id bigint;set id = 1; select id; end;`
+	tk.MustExec(sql)
+	tk.MustExec("call var3")
+	tk.Res[0].Check(testkit.Rows("1"))
+	tk.ClearProcedureRes()
+	sql = `create PROCEDURE var4() begin declare id char(10);set id = 1; select id; end;`
+	tk.MustExec(sql)
+	tk.MustExec("call var4")
+	tk.Res[0].Check(testkit.Rows("1"))
+	tk.ClearProcedureRes()
+	sql = `create PROCEDURE var5() begin declare id decimal(10,2);set id = 1.2; select id; end;`
+	tk.MustExec(sql)
+	tk.MustExec("call var5")
+	tk.Res[0].Check(testkit.Rows("1.20"))
+	tk.ClearProcedureRes()
+	sql = `create PROCEDURE var6() begin declare id datetime;set id = "2023-02-03 11:34:22"; select id; end;`
+	tk.MustExec(sql)
+	tk.MustExec("call var6")
+	tk.Res[0].Check(testkit.Rows("2023-02-03 11:34:22"))
+	tk.ClearProcedureRes()
+	sql = `create PROCEDURE var7() begin declare id TIMESTAMP;set id = "2023-02-03 11:34:22"; select id; end;`
+	tk.MustExec(sql)
+	tk.MustExec("call var7")
+	tk.Res[0].Check(testkit.Rows("2023-02-03 11:34:22"))
+	tk.ClearProcedureRes()
 }

@@ -105,7 +105,7 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expression.VarAssignment) error {
-	notFind,err := e.setSPVariable(name,v)
+	notFind, err := e.setSPVariable(name, v)
 	if err != nil {
 		return err
 	}

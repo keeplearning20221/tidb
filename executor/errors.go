@@ -79,4 +79,5 @@ var (
 	ErrSpAlreadyExists              = dbterror.ClassExecutor.NewStd(mysql.ErrSpAlreadyExists)
 	ErrSpDoesNotExist               = dbterror.ClassExecutor.NewStd(mysql.ErrSpDoesNotExist)
 	ErrSpDupParam                   = dbterror.ClassExecutor.NewStd(mysql.ErrSpDupParam)
+	ErrSpNotVarArg                  = dbterror.ClassOptimizer.NewStd(mysql.ErrSpNotVarArg)
 )

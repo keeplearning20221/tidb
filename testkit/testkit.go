@@ -562,6 +562,9 @@ func (tk *TestKit) InProcedure() {
 
 // ClearProcedureRes clear procedure result
 func (tk *TestKit) ClearProcedureRes() {
+	for id := 0; id < len(tk.Res); id++ {
+		tk.Res[id] = nil
+	}
 	tk.Res = tk.Res[0:0]
 }
 

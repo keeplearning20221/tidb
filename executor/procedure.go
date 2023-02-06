@@ -43,6 +43,7 @@ type ProcedureExec struct {
 	procedureInfo *plannercore.ProcedurebodyInfo
 	Plan          *plannercore.ProcedurePlan
 	outParam      map[string]string
+	builder       *plannercore.PlanBuilder
 }
 
 // buildCreateProcedure Create a new stored procedure executor.
@@ -410,8 +411,8 @@ func (e *ProcedureExec) parseNode(ctx context.Context, node plannercore.Procedur
 			nameList = append(nameList, names...)
 		}
 		defer func() {
-			for _, name := range nameList {
-				err = e.ctx.GetSessionVars().DeleteProcedureVariable(name, true)
+			for id := len(nameList) - 1; id >= 0; id-- {
+				err = e.ctx.GetSessionVars().DeleteProcedureVariable(nameList[id], true)
 			}
 		}()
 		for _, stmt := range node.(*plannercore.ProcedureBlock).ProcedureProcStmts {
@@ -434,24 +435,24 @@ func (e *ProcedureExec) parseNode(ctx context.Context, node plannercore.Procedur
 }
 
 // getDarumVar get expr result.
-func (e *ProcedureExec) getDarumVar(sqlType *types.FieldType, defaultVar expression.Expression) (*types.Datum, error) {
+func (e *ProcedureExec) getDarumVar(sqlType *types.FieldType, defaultVar expression.Expression) (types.Datum, error) {
 	var datum types.Datum
 	var err error
 	if defaultVar == nil {
 		datum = types.NewDatum("")
-		return &datum, nil
+		return datum, nil
 	} else {
 		datum, err = defaultVar.Eval(chunk.Row{})
 		if err != nil {
-			return nil, err
+			return datum, err
 		}
 	}
 
 	newdatum, err := datum.Clone().ConvertTo(e.ctx.GetSessionVars().StmtCtx, sqlType)
 	if err != nil {
-		return nil, err
+		return datum, err
 	}
-	return &newdatum, nil
+	return newdatum, nil
 }
 
 // createVariable Create stored procedure internal variable.
@@ -461,13 +462,13 @@ func (e *ProcedureExec) createVariable(ctx context.Context, pval *plannercore.Pr
 		return nil, err
 	}
 	for _, name := range pval.DeclNames {
-		if pval.DeclDefault != nil {
+		if pval.DeclDefault == nil {
 			err = e.newEmptyVars(ctx, name, pval.DeclType)
 			if err != nil {
 				return nil, err
 			}
 		} else {
-			err = e.ctx.GetSessionVars().NewProcedureVariable(name, *datum, pval.DeclType)
+			err = e.ctx.GetSessionVars().NewProcedureVariable(name, datum, pval.DeclType)
 			if err != nil {
 				return nil, err
 			}
@@ -487,8 +488,8 @@ func (e *ProcedureExec) realizeFunction(ctx context.Context, node *plannercore.P
 		nameList = append(nameList, names...)
 	}
 	defer func() {
-		for _, name := range nameList {
-			err = e.ctx.GetSessionVars().DeleteProcedureVariable(name, true)
+		for id := len(nameList) - 1; id >= 0; id-- {
+			err = e.ctx.GetSessionVars().DeleteProcedureVariable(nameList[id], true)
 		}
 	}()
 	for _, stmt := range node.ProcedureProcStmts {
@@ -600,7 +601,7 @@ func (e *ProcedureExec) callParam(ctx context.Context, s *ast.CallStmt) error {
 				return err
 			}
 			if param.ParamType == ast.MODE_IN {
-				err = e.ctx.GetSessionVars().NewProcedureVariable(param.DeclName, *datum, param.DeclType)
+				err = e.ctx.GetSessionVars().NewProcedureVariable(param.DeclName, datum, param.DeclType)
 				if err != nil {
 					return err
 				}

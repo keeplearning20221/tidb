@@ -369,6 +369,15 @@ func fetchProcdureInfo(sctx sessionctx.Context, name, db string) (*Procedurebody
 }
 
 func (b *PlanBuilder) setDefVal(tp *types.FieldType, collate string) error {
+	if typesNeedCharset(tp.GetType()) {
+		err := b.setFieldValue(tp, collate)
+		if err != nil {
+			return err
+		}
+	} else {
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CharsetBin)
+	}
 	if tp.GetFlen() != types.UnspecifiedLength || tp.GetDecimal() != types.UnspecifiedLength {
 		return nil
 	}
@@ -392,15 +401,7 @@ func (b *PlanBuilder) setDefVal(tp *types.FieldType, collate string) error {
 	case mysql.TypeYear:
 		tp.SetFlen(defaultFlen)
 	}
-	if typesNeedCharset(tp.GetType()) {
-		err := b.setFieldValue(tp, collate)
-		if err != nil {
-			return err
-		}
-	} else {
-		tp.SetCharset(charset.CharsetBin)
-		tp.SetCollate(charset.CharsetBin)
-	}
+
 	return nil
 }
 
@@ -417,7 +418,7 @@ func typesNeedCharset(tp byte) bool {
 func (b *PlanBuilder) setFieldValue(tp *types.FieldType, collate string) error {
 	if tp.GetCharset() == "" && tp.GetCollate() == "" {
 		tp.SetCollate(collate)
-		cs, err := charset.GetCollationByName(tp.GetCharset())
+		cs, err := charset.GetCollationByName(tp.GetCollate())
 		if err != nil {
 			return err
 		}

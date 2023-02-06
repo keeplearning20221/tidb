@@ -742,11 +742,13 @@ func TestCallVarParam(t *testing.T) {
 	tk.MustExec("call var1")
 	tk.Res[0].Check(testkit.Rows("1"))
 	tk.ClearProcedureRes()
+	// varchar
 	sql = `create PROCEDURE var2() begin declare id varchar(10);set id = 1; select id; end;`
 	tk.MustExec(sql)
 	tk.MustExec("call var2")
 	tk.Res[0].Check(testkit.Rows("1"))
 	tk.ClearProcedureRes()
+	// bigint
 	sql = `create PROCEDURE var3() begin declare id bigint;set id = 1; select id; end;`
 	tk.MustExec(sql)
 	tk.MustExec("call var3")
@@ -757,19 +759,102 @@ func TestCallVarParam(t *testing.T) {
 	tk.MustExec("call var4")
 	tk.Res[0].Check(testkit.Rows("1"))
 	tk.ClearProcedureRes()
+	// decimal
 	sql = `create PROCEDURE var5() begin declare id decimal(10,2);set id = 1.2; select id; end;`
 	tk.MustExec(sql)
 	tk.MustExec("call var5")
 	tk.Res[0].Check(testkit.Rows("1.20"))
 	tk.ClearProcedureRes()
+	// datetime
 	sql = `create PROCEDURE var6() begin declare id datetime;set id = "2023-02-03 11:34:22"; select id; end;`
 	tk.MustExec(sql)
 	tk.MustExec("call var6")
 	tk.Res[0].Check(testkit.Rows("2023-02-03 11:34:22"))
 	tk.ClearProcedureRes()
+	// TIMESTAMP
 	sql = `create PROCEDURE var7() begin declare id TIMESTAMP;set id = "2023-02-03 11:34:22"; select id; end;`
 	tk.MustExec(sql)
 	tk.MustExec("call var7")
 	tk.Res[0].Check(testkit.Rows("2023-02-03 11:34:22"))
+	tk.ClearProcedureRes()
+	// bit
+	sql = `create PROCEDURE var8() begin declare id bit;set id = 0; select id; end;`
+	tk.MustExec(sql)
+	tk.MustExec("call var8")
+	tk.Res[0].Check(testkit.Rows("\x00"))
+	tk.ClearProcedureRes()
+	// variables cover
+	sql = `create PROCEDURE var9() begin declare id bit;set id = 0; select id; 
+	begin declare id int;set id = 1; select id;  end; select id; end;`
+	tk.MustExec(sql)
+	tk.MustExec("call var9")
+	tk.Res[0].Check(testkit.Rows("\x00"))
+	tk.Res[1].Check(testkit.Rows("1"))
+	tk.Res[2].Check(testkit.Rows("\x00"))
+	tk.ClearProcedureRes()
+	sql = `create PROCEDURE var10() begin declare id1 varchar(10);declare id2 varchar(10);set id1 = 'ss';select id1; set id2 = 'ss';select id2; begin
+	declare id1 varchar(10);declare id2 varchar(10);set id1 = 1; set id2 = 2; select id1; select id2;  end; select id1; select id2; end;`
+	tk.MustExec(sql)
+	tk.MustExec("call var10")
+	tk.Res[0].Check(testkit.Rows("ss"))
+	tk.Res[1].Check(testkit.Rows("ss"))
+	tk.Res[2].Check(testkit.Rows("1"))
+	tk.Res[3].Check(testkit.Rows("2"))
+	tk.Res[4].Check(testkit.Rows("ss"))
+	tk.Res[5].Check(testkit.Rows("ss"))
+	tk.ClearProcedureRes()
+	sql = `create PROCEDURE var11() begin declare id1 varchar(10);declare id2 varchar(10);set id1 = 'ss';select id1; set id2 = 'ss';select id2; begin
+	declare id1 varchar(10);declare id2 varchar(10);set id1 = 1; set id2 = 2; select id1; select id2; begin declare id1 varchar(10); set id1 ='vv'; select id1; select id2; end;end; select id1; select id2; end;`
+	tk.MustExec(sql)
+	tk.MustExec("call var11")
+	tk.Res[0].Check(testkit.Rows("ss"))
+	tk.Res[1].Check(testkit.Rows("ss"))
+	tk.Res[2].Check(testkit.Rows("1"))
+	tk.Res[3].Check(testkit.Rows("2"))
+	tk.Res[4].Check(testkit.Rows("vv"))
+	tk.Res[5].Check(testkit.Rows("2"))
+	tk.Res[6].Check(testkit.Rows("ss"))
+	tk.Res[7].Check(testkit.Rows("ss"))
+	tk.ClearProcedureRes()
+}
+
+func TestCallVarDef(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	// int
+	sql := `create PROCEDURE var1() begin declare id varchar(10) default 1; select id; end;`
+	tk.MustExec(sql)
+	tk.MustExec("call var1")
+	tk.Res[0].Check(testkit.Rows("1"))
+	tk.ClearProcedureRes()
+
+	sql = `create PROCEDURE var2() begin declare id varchar(10) default "1"; select id; end;`
+	tk.MustExec(sql)
+	tk.MustExec("call var2")
+	tk.Res[0].Check(testkit.Rows("1"))
+	tk.ClearProcedureRes()
+
+	sql = `create PROCEDURE var3() begin declare id varchar(20) default now(); select id; end;`
+	tk.MustExec(sql)
+	tk.MustExec("set timestamp = 1675499582;call var3")
+	tk.Res[0].Check(testkit.Rows("2023-02-04 16:33:02"))
+	tk.ClearProcedureRes()
+
+	sql = `create PROCEDURE var4() begin declare id varchar(2) default now(); select id; end;`
+	tk.MustExec(sql)
+	tk.MustGetErrCode("set timestamp = 1675499582;call var4", 1406)
+	tk.ClearProcedureRes()
+
+	sql = `set @a = 3;create PROCEDURE var5() begin declare id varchar(2) default @a; select id; end;`
+	tk.MustExec(sql)
+	tk.MustExec("call var5")
+	tk.Res[0].Check(testkit.Rows("3"))
+	tk.ClearProcedureRes()
+
+	sql = `create PROCEDURE var6() begin declare id varchar(2) default 3; declare id2 varchar(2) default id;select id; select id2;end;`
+	tk.MustExec(sql)
+	tk.MustGetErrCode("call var6", 1054)
 	tk.ClearProcedureRes()
 }

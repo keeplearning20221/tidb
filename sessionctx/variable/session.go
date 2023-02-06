@@ -2519,12 +2519,10 @@ func (s *SessionVars) DeleteProcedureVariable(name string, mayCover bool) error 
 			return nil
 		}
 		if s.procedureVars.histroyVar[id].name == name {
-			err := s.NewProcedureVariable(name, s.procedureVars.histroyVar[id].value,
-				s.procedureVars.histroyVar[id].varType)
-			if err != nil {
-				return err
-			}
-			s.procedureVars.histroyVar = s.procedureVars.histroyVar[0 : id-1]
+			s.procedureVars.types[name] = s.procedureVars.histroyVar[id].varType
+			s.procedureVars.values[name] = s.procedureVars.histroyVar[id].value
+			s.procedureVars.histroyVar[id] = nil
+			s.procedureVars.histroyVar = s.procedureVars.histroyVar[0:id]
 		}
 	}
 	return nil

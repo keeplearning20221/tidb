@@ -382,11 +382,6 @@ func TestCallSelect(t *testing.T) {
 }
 
 func TestSelect(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.InProcedure()
-	tk.MustExec("use test")
-	initEnv(tk)
 
 	testcases := []struct {
 		name      string
@@ -536,10 +531,79 @@ func TestSelect(t *testing.T) {
 				"left join test.user_address ua on u.id = ua.user_id) as user_info",
 		},
 	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	initEnv(tk)
 	for _, tc := range testcases {
 		pSql, cSQL := procedureSQL(tc.name, tc.selectSQL)
 		runTestCases(t, store, pSql, cSQL, tc.selectSQL)
 	}
+	destroyEnv(tk)
+}
+
+func TestSelectInsert(t *testing.T) {
+	testcases := []struct {
+		name            string
+		insertSelectSQL string
+		selectSQL       string
+	}{
+		{
+			"build_user_info_pro",
+			"INSERT " +
+				"INTO user_info (id,user_id,username,password,age,sex,address," +
+				"subject_1,score_1," +
+				"subject_2,score_2," +
+				"subject_3,score_3," +
+				"subject_4,score_4," +
+				"subject_5,score_5) " +
+				"SELECT * " +
+				"FROM ( select u.id,us1.user_id,u.username,u.password,u.age,u.sex," +
+				"ua.address, " +
+				"us1.subject as subject_1,us1.score as score_1, " +
+				"us2.subject as subject_2,us2.score as score_2, " +
+				"us3.subject as subject_3,us3.score as score_3, " +
+				"us4.subject as subject_4,us4.score as score_4, " +
+				"us5.subject as subject_5,us5.score as score_5 " +
+				"from " +
+				"user u " +
+				"left join user_score us1 on us1.user_id = u.id and us1.subject = 1 " +
+				"left join user_score us2 on us2.user_id = u.id and us2.subject = 2 " +
+				"left join user_score us3 on us3.user_id = u.id and us3.subject = 3 " +
+				"left join user_score us4 on us4.user_id = u.id and us4.subject = 4 " +
+				"left join user_score us5 on us5.user_id = u.id and us5.subject = 5 " +
+				"left join test.user_address ua on u.id = ua.user_id) " +
+				"as user_info",
+			"select u.id,us1.user_id,u.username,u.password,u.age,u.sex,ua.address," +
+				"us1.subject as subject_1,us1.score as score_1," +
+				"us2.subject as subject_2,us2.score as score_2," +
+				"us3.subject as subject_3,us3.score as score_3," +
+				"us4.subject as subject_4,us4.score as score_4," +
+				"us5.subject as subject_5,us5.score as score_5 " +
+				"from user u " +
+				"left join user_score us1 on us1.user_id = u.id and us1.subject = 1 " +
+				"left join user_score us2 on us2.user_id = u.id and us2.subject = 2 " +
+				"left join user_score us3 on us3.user_id = u.id and us3.subject = 3 " +
+				"left join user_score us4 on us4.user_id = u.id and us4.subject = 4 " +
+				"left join user_score us5 on us5.user_id = u.id and us5.subject = 5 " +
+				"left join test.user_address ua on u.id = ua.user_id",
+		},
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	initEnv(tk)
+	procedureSql, callSQL := procedureSQL(testcases[0].name, testcases[0].insertSelectSQL)
+	newTk := testkit.NewTestKit(t, store)
+	newTk.InProcedure()
+	newTk.MustExec("use test")
+	newTk.MustExec(procedureSql)
+	newTk.MustExec(callSQL)
+	userInfoRows := newTk.MustQuery("select * from user_info").Rows()
+	selectRows := newTk.MustQuery(testcases[0].selectSQL).Rows()
+	require.Equal(t, len(userInfoRows), len(selectRows))
 	destroyEnv(tk)
 }
 
@@ -552,7 +616,7 @@ func runTestCases(t *testing.T, store kv.Storage, procedure, runProcedure, selec
 	procedureRows := tk.Res[0].Rows()
 	selectRows := tk.MustQuery(selectSQL).Rows()
 	require.Equal(t, len(procedureRows), len(selectRows))
-	require.Equal(t, procedureRows[0], selectRows[0])
+	require.Equal(t, procedureRows[0], selectRows[0], runProcedure)
 
 }
 
@@ -570,35 +634,51 @@ func createTable(tk *testkit.TestKit) {
 	tk.MustExec("CREATE TABLE IF NOT EXISTS `user` (`id` int(11) NOT NULL,`username` VARCHAR(30) DEFAULT NULL,`password` VARCHAR(30) DEFAULT NULL,`age` int(11) NOT NULL,`sex` int(11) NOT NULL,PRIMARY KEY (`id`),KEY `username` (`username`))")
 	tk.MustExec("CREATE TABLE IF NOT EXISTS `user_score` (`id` int(11) NOT NULL,`subject` int(11) NOT NULL,`user_id` int(11) NOT NULL,`score` int(11) NOT NULL,PRIMARY KEY (`id`))")
 	tk.MustExec("CREATE TABLE IF NOT EXISTS `user_address` (`id` int(11) NOT NULL,`user_id` int(11) NOT NULL,`address` VARCHAR(30) DEFAULT NULL,PRIMARY KEY (`id`),KEY `address` (`address`))")
+	tk.MustExec("CREATE TABLE IF NOT EXISTS `user_info` (" +
+		"`id` int(11) NOT NULL," +
+		"`user_id` int(11) NOT NULL," +
+		"`username` VARCHAR(30) DEFAULT NULL," +
+		"`password` VARCHAR(30) DEFAULT NULL," +
+		"`age` int(11) NOT NULL," +
+		"`sex` int(11) NOT NULL," +
+		"`address` VARCHAR(30) DEFAULT NULL," +
+		"`subject_1` int(11) DEFAULT NULL,`score_1` int(11) DEFAULT NULL," +
+		"`subject_2` int(11) DEFAULT NULL,`score_2` int(11) DEFAULT NULL," +
+		"`subject_3` int(11) DEFAULT NULL,`score_3` int(11) DEFAULT NULL," +
+		"`subject_4` int(11) DEFAULT NULL,`score_4` int(11) DEFAULT NULL," +
+		"`subject_5` int(11) DEFAULT NULL,`score_5` int(11) DEFAULT NULL)")
 }
 
 func dropTable(tk *testkit.TestKit) {
 	tk.MustExec("drop table IF EXISTS `user`")
 	tk.MustExec("drop table IF EXISTS `user_score`")
 	tk.MustExec("drop table IF EXISTS `user_address`")
+	tk.MustExec("drop table IF EXISTS `user_info`")
 }
 
 func dropProcedure(tk *testkit.TestKit) {
-	tk.MustExec("DROP PROCEDURE user_pro")
-	tk.MustExec("DROP PROCEDURE score_pro")
-	tk.MustExec("DROP PROCEDURE user_score_rank_pro")
-	tk.MustExec("DROP PROCEDURE user_win_pro")
-	tk.MustExec("DROP PROCEDURE user_win_join_pro")
-	tk.MustExec("DROP PROCEDURE user_join_groupBy_pro")
-	tk.MustExec("DROP PROCEDURE user_score_top10_pro")
-	tk.MustExec("DROP PROCEDURE user_fun_pro")
-	tk.MustExec("DROP PROCEDURE user_sub_sel_pro")
-	tk.MustExec("DROP PROCEDURE user_left_join_groupBy_pro")
-	tk.MustExec("DROP PROCEDURE user_join_pro")
-	tk.MustExec("DROP PROCEDURE user_left_join_pro")
-	tk.MustExec("DROP PROCEDURE user_right_join_pro")
-	tk.MustExec("DROP PROCEDURE union_pro")
-	tk.MustExec("DROP PROCEDURE user_top10_pro")
-	tk.MustExec("DROP PROCEDURE user_info_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS user_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS score_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS user_score_rank_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS user_win_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS user_win_join_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS user_join_groupBy_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS user_score_top10_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS user_fun_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS user_sub_sel_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS user_left_join_groupBy_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS user_join_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS user_left_join_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS user_right_join_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS union_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS user_top10_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS user_info_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS build_user_info_pro")
 }
 
 func initEnv(tk *testkit.TestKit) {
 	dropTable(tk)
+	dropProcedure(tk)
 	createTable(tk)
 	tk.MustExec("CREATE PROCEDURE insert_user (IN id INTEGER) BEGIN insert into user values(id, CONCAT('username-', id),CONCAT('password-', id),FLOOR( 15 + RAND() * 23),Mod(id,2)); end")
 	tk.MustExec("CREATE PROCEDURE insert_user_score(IN scoreId INTEGER,IN id INTEGER) BEGIN insert into user_score values(scoreId, 1, id, FLOOR( 40 + RAND() * 100)); end")

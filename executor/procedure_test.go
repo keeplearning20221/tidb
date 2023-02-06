@@ -390,159 +390,228 @@ func TestSelect(t *testing.T) {
 	tk.InProcedure()
 	tk.MustExec("use test")
 	initEnv(tk)
+	name := "user_pro"
+	selectSQL := "select a.id,a.username,a.password,a.age,a.sex " +
+		"from user a where a.id > 10 and a.id < 50 order by id"
+	pSql, cSQL := procedureSQL(name, selectSQL)
+	runTestCases(t, store, pSql, cSQL, selectSQL)
 
+	name = "score_pro"
+	selectSQL = "select us.subject,count(us.user_id),sum(us.score),avg(us.score),max(us.score),min(us.score) " +
+		"from user_score us where us.score > 90 group by us.subject"
+	pSql, cSQL = procedureSQL(name, selectSQL)
+	runTestCases(t, store, pSql, cSQL, selectSQL)
+
+	name = "user_score_rank_pro"
+	selectSQL = "select *,rank() over (partition by subject order by score desc) as ranking " +
+		"from user_score"
+	pSql, cSQL = procedureSQL(name, selectSQL)
+	runTestCases(t, store, pSql, cSQL, selectSQL)
+
+	name = "user_win_pro"
+	selectSQL = "select us.*,sum(us.score) over (order by us.id) as current_sum,avg(us.score) over (order by us.id) as current_avg," +
+		"count(us.score) over (order by us.id) as current_count,max(us.score) over (order by us.id) as current_max," +
+		"min(us.score) over (order by us.id) as current_min from user_score us"
+	pSql, cSQL = procedureSQL(name, selectSQL)
+	runTestCases(t, store, pSql, cSQL, selectSQL)
+
+	name = "user_win_join_pro"
+	selectSQL = "select us.*,sum(us.score) over (order by us.id) as current_sum,avg(us.score) over (order by us.id) as current_avg," +
+		"count(us.score) over (order by us.id) as current_count,max(us.score) over (order by us.id) as current_max," +
+		"min(us.score) over (order by us.id) as current_min,u.username ,ua.address,CONCAT(u.username, \"-\" ,ua.address) as userinfo " +
+		"from user_score us left join user u on u.id = us.user_id left join user_address ua on ua.id = us.user_id"
+	pSql, cSQL = procedureSQL(name, selectSQL)
+	runTestCases(t, store, pSql, cSQL, selectSQL)
+
+	name = "user_join_groupBy_pro"
+	selectSQL = "SELECT DISTINCT us.user_id,u.username ,ua.address,CONCAT(u.username, \"-\" ,ua.address) as userinfo," +
+		"sum(us.score) from user_score us left join user u on u.id = us.user_id left join user_address ua on ua.id = us.user_id " +
+		"group by us.user_id,u.username order by us.user_id"
+	pSql, cSQL = procedureSQL(name, selectSQL)
+	runTestCases(t, store, pSql, cSQL, selectSQL)
+
+	name = "user_score_top10_pro"
+	selectSQL = "select a.subject,a.id,a.user_id,u.username, a.score,a.rownum " +
+		"from (" +
+		"select id,user_id,subject,score,row_number() over (order by score desc) as rownum " +
+		"from user_score) as a left join user u on a.user_id = u.id " +
+		"inner join user_score as b on a.id=b.id " +
+		"where a.rownum<=10 order by a.rownum"
+	pSql, cSQL = procedureSQL(name, selectSQL)
+	runTestCases(t, store, pSql, cSQL, selectSQL)
+
+	name = "user_fun_pro"
+	selectSQL = "select *,u.username,ua.address,CONCAT(u.username, \"-\" ,ua.address) as userinfo," +
+		"avg(us.score) over (order by us.id rows 2 preceding) as current_avg, " +
+		"sum(score) over (order by us.id rows 2 preceding) as current_sum " +
+		"from user_score us left join user u on u.id = us.user_id " +
+		"left join user_address ua on ua.id = us.user_id order by u.id"
+	pSql, cSQL = procedureSQL(name, selectSQL)
+	runTestCases(t, store, pSql, cSQL, selectSQL)
+
+	name = "user_sub_sel_pro"
+	selectSQL = "select a.id,a.username,a.password,a.age,a.sex " +
+		"from user a " +
+		"where a.id in (select user_id from user_score where score > 90) order by a.age desc,a.id"
+	pSql, cSQL = procedureSQL(name, selectSQL)
+	runTestCases(t, store, pSql, cSQL, selectSQL)
+
+	name = "user_left_join_groupBy_pro"
+	selectSQL = "select users.subject,sum(users.score) " +
+		"from (" +
+		"select us.user_id,u.username,us.subject,us.score " +
+		"from user_score us " +
+		"left join user u on u.id = us.user_id where us.score > 90 ) as users " +
+		"group by users.subject"
+	pSql, cSQL = procedureSQL(name, selectSQL)
+	runTestCases(t, store, pSql, cSQL, selectSQL)
+
+	name = "user_join_pro"
+	selectSQL = "select users.subject,sum(users.score) " +
+		"from (" +
+		"select us.user_id,u.username,us.subject,us.score " +
+		"from user_score us " +
+		"join user u on u.id = us.user_id where us.score > 90 ) as users " +
+		"group by users.subject"
+	pSql, cSQL = procedureSQL(name, selectSQL)
+	runTestCases(t, store, pSql, cSQL, selectSQL)
+
+	name = "user_left_join_pro"
+	selectSQL = "select a.id,a.username,a.password,a.age,a.sex,ad.address," +
+		"CONCAT(a.username, \"-\" ,ad.address) as userinfo " +
+		"from user a " +
+		"left join user_address ad on a.id = ad.user_id " +
+		"where a.id > 10 and a.id < 50  order by a.id"
+	pSql, cSQL = procedureSQL(name, selectSQL)
+	runTestCases(t, store, pSql, cSQL, selectSQL)
+
+	name = "user_right_join_pro"
+	selectSQL = "select a.id,a.username,a.password,a.age,a.sex,ad.score " +
+		"from user a " +
+		"right join user_score ad on a.id = ad.user_id " +
+		"where a.id > 10 and a.id < 50 " +
+		"order by ad.score desc,a.age"
+	pSql, cSQL = procedureSQL(name, selectSQL)
+	runTestCases(t, store, pSql, cSQL, selectSQL)
+
+	name = "union_pro"
+	selectSQL = "select * " +
+		"from (" +
+		"select a.id,a.username,a.password,a.age,a.sex,ad.score " +
+		"from user a " +
+		"left join user_score ad on a.id = ad.user_id " +
+		"where a.id in (" +
+		"select user_id " +
+		"from user_score " +
+		"where score > 90 and score < 99 " +
+		"order by ad.score desc,a.age) " +
+		"union " +
+		"select a.id,a.username,a.password,a.age,a.sex,ad.score " +
+		"from user a " +
+		"left join user_score ad on a.id = ad.user_id " +
+		"where a.id in (" +
+		"select user_id " +
+		"from user_score " +
+		"where score > 30 and score < 70)) user_info " +
+		"order by user_info.score desc,user_info.age"
+	pSql, cSQL = procedureSQL(name, selectSQL)
+	runTestCases(t, store, pSql, cSQL, selectSQL)
+
+	name = "user_top10_pro"
+	selectSQL = "select a.subject,a.id,a.score,a.rownum " +
+		"from (" +
+		"select id,subject,score,row_number() over (partition by subject order by score desc) as rownum " +
+		"from user_score) as a inner join user_score as b on a.id=b.id where a.rownum<=10 order by a.subject"
+	pSql, cSQL = procedureSQL(name, selectSQL)
+	runTestCases(t, store, pSql, cSQL, selectSQL)
+
+	name = "user_info_pro"
+	selectSQL = "select rank() over (partition by user_info.subject_1 order by user_info.score_1 desc) as ranking," +
+		"avg(user_info.score_1) over (order by user_info.id rows 2 preceding) as current_avg," +
+		"sum(user_info.score_1) over (order by user_info.id rows 2 preceding) as current_sum," +
+		"sum(user_info.score_1) over (order by user_info.id) as score_1_sum," +
+		"avg(user_info.score_1) over (order by user_info.id) as score_1_avg," +
+		"count(user_info.score_1) over (order by user_info.id) as score_1_count," +
+		"max(user_info.score_1) over (order by user_info.id) as score_1_max," +
+		"min(user_info.score_1) over (order by user_info.id) as score_1_min," +
+		"user_info.* " +
+		"from (" +
+		"select u.id,u.username,us1.subject as subject_1,us1.score as score_1,us2.subject as subject_2,us2.score as score_2," +
+		"us3.subject as subject_3,us3.score as score_3,us4.subject as subject_4,us4.score as score_4,us5.subject as subject_5," +
+		"us5.score as score_5,ua.address " +
+		"from user u " +
+		"left join user_score us1 on us1.user_id = u.id and us1.subject = 1 " +
+		"left join user_score us2 on us2.user_id = u.id and us2.subject = 2 " +
+		"left join user_score us3 on us3.user_id = u.id and us3.subject = 3 " +
+		"left join user_score us4 on us4.user_id = u.id and us4.subject = 4 " +
+		"left join user_score us5 on us5.user_id = u.id and us5.subject = 5 " +
+		"left join test.user_address ua on u.id = ua.user_id) as user_info"
+	pSql, cSQL = procedureSQL(name, selectSQL)
+	runTestCases(t, store, pSql, cSQL, selectSQL)
+	destroyEnv(tk)
+}
+
+func TestSelectInsert(t *testing.T) {
 	testcases := []struct {
-		name      string
-		selectSQL string
+		name            string
+		insertSelectSQL string
+		selectSQL       string
 	}{
 		{
-			"user_pro",
-			"select a.id,a.username,a.password,a.age,a.sex " +
-				"from user a where a.id > 10 and a.id < 50 order by id",
-		},
-		{
-			"score_pro",
-			"select us.subject,count(us.user_id),sum(us.score),avg(us.score),max(us.score),min(us.score) " +
-				"from user_score us where us.score > 90 group by us.subject",
-		},
-		{
-			"user_score_rank_pro",
-			"select *,rank() over (partition by subject order by score desc) as ranking " +
-				"from user_score",
-		},
-		{
-			"user_win_pro",
-			"select us.*,sum(us.score) over (order by us.id) as current_sum,avg(us.score) over (order by us.id) as current_avg," +
-				"count(us.score) over (order by us.id) as current_count,max(us.score) over (order by us.id) as current_max," +
-				"min(us.score) over (order by us.id) as current_min from user_score us",
-		},
-		{
-			"user_win_join_pro",
-			"select us.*,sum(us.score) over (order by us.id) as current_sum,avg(us.score) over (order by us.id) as current_avg," +
-				"count(us.score) over (order by us.id) as current_count,max(us.score) over (order by us.id) as current_max," +
-				"min(us.score) over (order by us.id) as current_min,u.username ,ua.address,CONCAT(u.username, \"-\" ,ua.address) as userinfo " +
-				"from user_score us left join user u on u.id = us.user_id left join user_address ua on ua.id = us.user_id",
-		},
-		{
-			"user_join_groupBy_pro",
-			"SELECT DISTINCT us.user_id,u.username ,ua.address,CONCAT(u.username, \"-\" ,ua.address) as userinfo," +
-				"sum(us.score) from user_score us left join user u on u.id = us.user_id left join user_address ua on ua.id = us.user_id " +
-				"group by us.user_id,u.username order by us.user_id",
-		},
-		{
-			"user_score_top10_pro",
-			"select a.subject,a.id,a.user_id,u.username, a.score,a.rownum " +
-				"from (" +
-				"select id,user_id,subject,score,row_number() over (order by score desc) as rownum " +
-				"from user_score) as a left join user u on a.user_id = u.id " +
-				"inner join user_score as b on a.id=b.id " +
-				"where a.rownum<=10 order by a.rownum",
-		},
-		{
-			"user_fun_pro",
-			"select *,u.username,ua.address,CONCAT(u.username, \"-\" ,ua.address) as userinfo," +
-				"avg(us.score) over (order by us.id rows 2 preceding) as current_avg, " +
-				"sum(score) over (order by us.id rows 2 preceding) as current_sum " +
-				"from user_score us left join user u on u.id = us.user_id " +
-				"left join user_address ua on ua.id = us.user_id order by u.id",
-		},
-		{
-			"user_sub_sel_pro",
-			"select a.id,a.username,a.password,a.age,a.sex " +
-				"from user a " +
-				"where a.id in (select user_id from user_score where score > 90) order by a.age desc,a.id",
-		},
-		{
-			"user_left_join_groupBy_pro",
-			"select users.subject,sum(users.score) " +
-				"from (" +
-				"select us.user_id,u.username,us.subject,us.score " +
-				"from user_score us " +
-				"left join user u on u.id = us.user_id where us.score > 90 ) as users " +
-				"group by users.subject",
-		},
-		{
-			"user_join_pro",
-			"select users.subject,sum(users.score) " +
-				"from (" +
-				"select us.user_id,u.username,us.subject,us.score " +
-				"from user_score us " +
-				"join user u on u.id = us.user_id where us.score > 90 ) as users " +
-				"group by users.subject",
-		},
-		{
-			"user_left_join_pro",
-			"select a.id,a.username,a.password,a.age,a.sex,ad.address," +
-				"CONCAT(a.username, \"-\" ,ad.address) as userinfo " +
-				"from user a " +
-				"left join user_address ad on a.id = ad.user_id " +
-				"where a.id > 10 and a.id < 50  order by a.id",
-		},
-		{
-			"user_right_join_pro",
-			"select a.id,a.username,a.password,a.age,a.sex,ad.score " +
-				"from user a " +
-				"right join user_score ad on a.id = ad.user_id " +
-				"where a.id > 10 and a.id < 50 " +
-				"order by ad.score desc,a.age",
-		},
-		{
-			"union_pro",
-			"select * " +
-				"from (" +
-				"select a.id,a.username,a.password,a.age,a.sex,ad.score " +
-				"from user a " +
-				"left join user_score ad on a.id = ad.user_id " +
-				"where a.id in (" +
-				"select user_id " +
-				"from user_score " +
-				"where score > 90 and score < 99 " +
-				"order by ad.score desc,a.age) " +
-				"union " +
-				"select a.id,a.username,a.password,a.age,a.sex,ad.score " +
-				"from user a " +
-				"left join user_score ad on a.id = ad.user_id " +
-				"where a.id in (" +
-				"select user_id " +
-				"from user_score " +
-				"where score > 30 and score < 70)) user_info " +
-				"order by user_info.score desc,user_info.age",
-		},
-		{
-			"user_top10_pro",
-			"select a.subject,a.id,a.score,a.rownum " +
-				"from (" +
-				"select id,subject,score,row_number() over (partition by subject order by score desc) as rownum " +
-				"from user_score) as a inner join user_score as b on a.id=b.id where a.rownum<=10 order by a.subject",
-		},
-		{
-			"user_info_pro",
-			"select rank() over (partition by user_info.subject_1 order by user_info.score_1 desc) as ranking," +
-				"avg(user_info.score_1) over (order by user_info.id rows 2 preceding) as current_avg," +
-				"sum(user_info.score_1) over (order by user_info.id rows 2 preceding) as current_sum," +
-				"sum(user_info.score_1) over (order by user_info.id) as score_1_sum," +
-				"avg(user_info.score_1) over (order by user_info.id) as score_1_avg," +
-				"count(user_info.score_1) over (order by user_info.id) as score_1_count," +
-				"max(user_info.score_1) over (order by user_info.id) as score_1_max," +
-				"min(user_info.score_1) over (order by user_info.id) as score_1_min," +
-				"user_info.* " +
-				"from (" +
-				"select u.id,u.username,us1.subject as subject_1,us1.score as score_1,us2.subject as subject_2,us2.score as score_2," +
-				"us3.subject as subject_3,us3.score as score_3,us4.subject as subject_4,us4.score as score_4,us5.subject as subject_5," +
-				"us5.score as score_5,ua.address " +
+			"build_user_info_pro",
+			"INSERT " +
+				"INTO user_info (id,user_id,username,password,age,sex,address," +
+				"subject_1,score_1," +
+				"subject_2,score_2," +
+				"subject_3,score_3," +
+				"subject_4,score_4," +
+				"subject_5,score_5) " +
+				"SELECT * " +
+				"FROM ( select u.id,us1.user_id,u.username,u.password,u.age,u.sex," +
+				"ua.address, " +
+				"us1.subject as subject_1,us1.score as score_1, " +
+				"us2.subject as subject_2,us2.score as score_2, " +
+				"us3.subject as subject_3,us3.score as score_3, " +
+				"us4.subject as subject_4,us4.score as score_4, " +
+				"us5.subject as subject_5,us5.score as score_5 " +
+				"from " +
+				"user u " +
+				"left join user_score us1 on us1.user_id = u.id and us1.subject = 1 " +
+				"left join user_score us2 on us2.user_id = u.id and us2.subject = 2 " +
+				"left join user_score us3 on us3.user_id = u.id and us3.subject = 3 " +
+				"left join user_score us4 on us4.user_id = u.id and us4.subject = 4 " +
+				"left join user_score us5 on us5.user_id = u.id and us5.subject = 5 " +
+				"left join test.user_address ua on u.id = ua.user_id) " +
+				"as user_info",
+			"select u.id,us1.user_id,u.username,u.password,u.age,u.sex,ua.address," +
+				"us1.subject as subject_1,us1.score as score_1," +
+				"us2.subject as subject_2,us2.score as score_2," +
+				"us3.subject as subject_3,us3.score as score_3," +
+				"us4.subject as subject_4,us4.score as score_4," +
+				"us5.subject as subject_5,us5.score as score_5 " +
 				"from user u " +
 				"left join user_score us1 on us1.user_id = u.id and us1.subject = 1 " +
 				"left join user_score us2 on us2.user_id = u.id and us2.subject = 2 " +
 				"left join user_score us3 on us3.user_id = u.id and us3.subject = 3 " +
 				"left join user_score us4 on us4.user_id = u.id and us4.subject = 4 " +
 				"left join user_score us5 on us5.user_id = u.id and us5.subject = 5 " +
-				"left join test.user_address ua on u.id = ua.user_id) as user_info",
+				"left join test.user_address ua on u.id = ua.user_id",
 		},
 	}
-	for _, tc := range testcases {
-		pSql, cSQL := procedureSQL(tc.name, tc.selectSQL)
-		runTestCases(t, store, pSql, cSQL, tc.selectSQL)
-	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	initEnv(tk)
+	procedureSql, callSQL := procedureSQL(testcases[0].name, testcases[0].insertSelectSQL)
+	newTk := testkit.NewTestKit(t, store)
+	newTk.InProcedure()
+	newTk.MustExec("use test")
+	newTk.MustExec(procedureSql)
+	newTk.MustExec(callSQL)
+	userInfoRows := newTk.MustQuery("select * from user_info").Rows()
+	selectRows := newTk.MustQuery(testcases[0].selectSQL).Rows()
+	require.Equal(t, len(userInfoRows), len(selectRows))
 	destroyEnv(tk)
 }
 
@@ -552,8 +621,8 @@ func runTestCases(t *testing.T, store kv.Storage, procedure, runProcedure, selec
 	tk.MustExec("use test")
 	tk.MustExec(procedure)
 	tk.MustExec(runProcedure)
-	procedureRows := tk.Res[0].Rows()
-	selectRows := tk.MustQuery(selectSQL).Rows()
+	procedureRows := tk.Res[0].Sort().Rows()
+	selectRows := tk.MustQuery(selectSQL).Sort().Rows()
 	require.Equal(t, len(procedureRows), len(selectRows))
 	require.Equal(t, procedureRows[0], selectRows[0])
 
@@ -573,35 +642,51 @@ func createTable(tk *testkit.TestKit) {
 	tk.MustExec("CREATE TABLE IF NOT EXISTS `user` (`id` int(11) NOT NULL,`username` VARCHAR(30) DEFAULT NULL,`password` VARCHAR(30) DEFAULT NULL,`age` int(11) NOT NULL,`sex` int(11) NOT NULL,PRIMARY KEY (`id`),KEY `username` (`username`))")
 	tk.MustExec("CREATE TABLE IF NOT EXISTS `user_score` (`id` int(11) NOT NULL,`subject` int(11) NOT NULL,`user_id` int(11) NOT NULL,`score` int(11) NOT NULL,PRIMARY KEY (`id`))")
 	tk.MustExec("CREATE TABLE IF NOT EXISTS `user_address` (`id` int(11) NOT NULL,`user_id` int(11) NOT NULL,`address` VARCHAR(30) DEFAULT NULL,PRIMARY KEY (`id`),KEY `address` (`address`))")
+	tk.MustExec("CREATE TABLE IF NOT EXISTS `user_info` (" +
+		"`id` int(11) NOT NULL," +
+		"`user_id` int(11) NOT NULL," +
+		"`username` VARCHAR(30) DEFAULT NULL," +
+		"`password` VARCHAR(30) DEFAULT NULL," +
+		"`age` int(11) NOT NULL," +
+		"`sex` int(11) NOT NULL," +
+		"`address` VARCHAR(30) DEFAULT NULL," +
+		"`subject_1` int(11) DEFAULT NULL,`score_1` int(11) DEFAULT NULL," +
+		"`subject_2` int(11) DEFAULT NULL,`score_2` int(11) DEFAULT NULL," +
+		"`subject_3` int(11) DEFAULT NULL,`score_3` int(11) DEFAULT NULL," +
+		"`subject_4` int(11) DEFAULT NULL,`score_4` int(11) DEFAULT NULL," +
+		"`subject_5` int(11) DEFAULT NULL,`score_5` int(11) DEFAULT NULL)")
 }
 
 func dropTable(tk *testkit.TestKit) {
 	tk.MustExec("drop table IF EXISTS `user`")
 	tk.MustExec("drop table IF EXISTS `user_score`")
 	tk.MustExec("drop table IF EXISTS `user_address`")
+	tk.MustExec("drop table IF EXISTS `user_info`")
 }
 
 func dropProcedure(tk *testkit.TestKit) {
-	tk.MustExec("DROP PROCEDURE user_pro")
-	tk.MustExec("DROP PROCEDURE score_pro")
-	tk.MustExec("DROP PROCEDURE user_score_rank_pro")
-	tk.MustExec("DROP PROCEDURE user_win_pro")
-	tk.MustExec("DROP PROCEDURE user_win_join_pro")
-	tk.MustExec("DROP PROCEDURE user_join_groupBy_pro")
-	tk.MustExec("DROP PROCEDURE user_score_top10_pro")
-	tk.MustExec("DROP PROCEDURE user_fun_pro")
-	tk.MustExec("DROP PROCEDURE user_sub_sel_pro")
-	tk.MustExec("DROP PROCEDURE user_left_join_groupBy_pro")
-	tk.MustExec("DROP PROCEDURE user_join_pro")
-	tk.MustExec("DROP PROCEDURE user_left_join_pro")
-	tk.MustExec("DROP PROCEDURE user_right_join_pro")
-	tk.MustExec("DROP PROCEDURE union_pro")
-	tk.MustExec("DROP PROCEDURE user_top10_pro")
-	tk.MustExec("DROP PROCEDURE user_info_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS user_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS score_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS user_score_rank_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS user_win_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS user_win_join_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS user_join_groupBy_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS user_score_top10_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS user_fun_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS user_sub_sel_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS user_left_join_groupBy_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS user_join_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS user_left_join_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS user_right_join_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS union_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS user_top10_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS user_info_pro")
+	tk.MustExec("DROP PROCEDURE IF EXISTS build_user_info_pro")
 }
 
 func initEnv(tk *testkit.TestKit) {
 	dropTable(tk)
+	dropProcedure(tk)
 	createTable(tk)
 	tk.MustExec("CREATE PROCEDURE insert_user (IN id INTEGER) BEGIN insert into user values(id, CONCAT('username-', id),CONCAT('password-', id),FLOOR( 15 + RAND() * 23),Mod(id,2)); end")
 	tk.MustExec("CREATE PROCEDURE insert_user_score(IN scoreId INTEGER,IN id INTEGER) BEGIN insert into user_score values(scoreId, 1, id, FLOOR( 40 + RAND() * 100)); end")

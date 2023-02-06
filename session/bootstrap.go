@@ -502,7 +502,7 @@ const (
 	// To do :Make as hidden table and query through the view
 	CreateRouteTable = `CREATE TABLE IF NOT EXISTS mysql.routines (
         route_schema varchar(64) NOT NULL,
-        name varchar(64) CHARACTER SET utf8mb4 NOT NULL,
+        name varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
         type enum('FUNCTION','PROCEDURE') COLLATE utf8mb4_bin NOT NULL,
         definition longblob,
         definition_utf8 longtext COLLATE utf8mb4_bin,

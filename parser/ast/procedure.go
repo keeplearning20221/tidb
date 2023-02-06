@@ -39,10 +39,9 @@ const (
 // StoreParameter Stored procedure entry and exit parameters.
 type StoreParameter struct {
 	node
-	Paramstatus  int
-	ParamType    *types.FieldType
-	ParamName    string
-	ParamCollate string
+	Paramstatus int
+	ParamType   *types.FieldType
+	ParamName   string
 }
 
 // Restore implements Node interface.
@@ -59,8 +58,6 @@ func (n *StoreParameter) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteName(n.ParamName)
 	ctx.WritePlain(" ")
 	ctx.WriteKeyWord(n.ParamType.CompactStr())
-	ctx.WritePlain(" ")
-	ctx.WriteKeyWord(n.ParamCollate)
 	return nil
 }
 
@@ -79,7 +76,6 @@ type ProcedureDecl struct {
 	node
 	DeclNames   []string
 	DeclType    *types.FieldType
-	DeclCollate string
 	DeclDefault ExprNode
 }
 
@@ -94,7 +90,6 @@ func (n *ProcedureDecl) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WritePlain(" ")
 	ctx.WriteKeyWord(n.DeclType.CompactStr())
-	ctx.WriteKeyWord(n.DeclCollate)
 	if n.DeclDefault != nil {
 		ctx.WriteKeyWord(" DEFAULT ")
 		if err := n.DeclDefault.Restore(ctx); err != nil {

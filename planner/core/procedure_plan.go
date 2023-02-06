@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -80,6 +81,7 @@ type ProcedureBlock struct {
 
 // ProcedurebodyInfo Store stored procedure content read from the table.
 type ProcedurebodyInfo struct {
+	Name                string
 	Procedurebody       string
 	SqlMode             string
 	CharacterSetClient  string
@@ -91,18 +93,16 @@ type ProcedurebodyInfo struct {
 type ProcedurebodyVal struct {
 	DeclNames   []string
 	DeclType    *types.FieldType
-	DeclCollate string
 	DeclDefault expression.Expression
 	DeclRes     types.Datum
 }
 
 // ProcedureParameterVal Store stored procedure parameter.
 type ProcedureParameterVal struct {
-	DeclName    string
-	DeclType    *types.FieldType
-	DeclCollate string
-	DeclInput   expression.Expression
-	ParamType   int
+	DeclName  string
+	DeclType  *types.FieldType
+	DeclInput expression.Expression
+	ParamType int
 }
 
 // ProcedurePlan store call plan.
@@ -114,7 +114,7 @@ type ProcedurePlan struct {
 }
 
 // analysiStructure Generate an execution plan based on stored procedure.
-func (b *PlanBuilder) analysiStructure(ctx context.Context, stmtNodes []ast.StmtNode, node *ast.CallStmt) (*ProcedurePlan, error) {
+func (b *PlanBuilder) analysiStructure(ctx context.Context, stmtNodes []ast.StmtNode, node *ast.CallStmt, collate string) (*ProcedurePlan, error) {
 	if len(stmtNodes) > 1 {
 		return nil, errors.New("Parse procedure error")
 	}
@@ -128,7 +128,7 @@ func (b *PlanBuilder) analysiStructure(ctx context.Context, stmtNodes []ast.Stmt
 			IfNotExists:   stmtNodes[0].(*ast.ProcedureInfo).IfNotExists,
 			ProcedureName: stmtNodes[0].(*ast.ProcedureInfo).ProcedureName,
 		}
-		body, err := b.buildCallBodyPlan(ctx, stmtNodes[0].(*ast.ProcedureInfo))
+		body, err := b.buildCallBodyPlan(ctx, stmtNodes[0].(*ast.ProcedureInfo), collate)
 		if err != nil {
 			return nil, err
 		}
@@ -140,6 +140,9 @@ func (b *PlanBuilder) analysiStructure(ctx context.Context, stmtNodes []ast.Stmt
 			return nil, err
 		}
 		params, err := b.buildCallParamPlan(ctx, stmtNodes[0].(*ast.ProcedureInfo), node)
+		if err != nil {
+			return nil, err
+		}
 		plan.ProcedureParam = params
 		return plan, nil
 	default:
@@ -149,18 +152,20 @@ func (b *PlanBuilder) analysiStructure(ctx context.Context, stmtNodes []ast.Stmt
 }
 
 // getBodyVar Generate block internal variable execution plan.
-func (b *PlanBuilder) getBodyVar(ctx context.Context, node *ast.ProcedureBlock) (vars []*ProcedurebodyVal, err error) {
+func (b *PlanBuilder) getBodyVar(ctx context.Context, node *ast.ProcedureBlock, collate string) (vars []*ProcedurebodyVal, err error) {
 	vars = make([]*ProcedurebodyVal, 0, len(node.ProcedureVars))
 	for _, stmt := range node.ProcedureVars {
 		if err != nil {
 			return nil, err
 		}
 		pvar := &ProcedurebodyVal{
-			DeclNames:   stmt.DeclNames,
-			DeclType:    stmt.DeclType,
-			DeclCollate: stmt.DeclCollate,
+			DeclNames: stmt.DeclNames,
+			DeclType:  stmt.DeclType,
 		}
-
+		err := b.setDefVal(pvar.DeclType, collate)
+		if err != nil {
+			return nil, err
+		}
 		if stmt.DeclDefault != nil {
 			res, ok := stmt.DeclDefault.(*driver.ValueExpr)
 			if ok {
@@ -178,18 +183,18 @@ func (b *PlanBuilder) getBodyVar(ctx context.Context, node *ast.ProcedureBlock) 
 }
 
 // buildProcedureNode Analyze stored procedure internal objects.
-func (b *PlanBuilder) buildProcedureNode(ctx context.Context, node ast.StmtNode) (basebody ProcedureBaseBody, err error) {
+func (b *PlanBuilder) buildProcedureNode(ctx context.Context, node ast.StmtNode, collate string) (basebody ProcedureBaseBody, err error) {
 	switch node.(type) {
 	case *ast.ProcedureBlock:
 		block := &ProcedureBlock{}
 		basebody := make([]ProcedureBaseBody, 0, len(node.(*ast.ProcedureBlock).ProcedureProcStmts))
-		vars, err := b.getBodyVar(ctx, node.(*ast.ProcedureBlock))
+		vars, err := b.getBodyVar(ctx, node.(*ast.ProcedureBlock), collate)
 		if err != nil {
 			return nil, err
 		}
 		block.Vars = vars
 		for _, stmt := range node.(*ast.ProcedureBlock).ProcedureProcStmts {
-			body, err := b.buildProcedureNode(ctx, stmt)
+			body, err := b.buildProcedureNode(ctx, stmt, collate)
 			if err != nil {
 				return nil, err
 			}
@@ -209,14 +214,17 @@ func (b *PlanBuilder) buildCallParamPlan(ctx context.Context, stmtNodes *ast.Pro
 	params := make([]*ProcedureParameterVal, 0, len(stmtNodes.ProcedureParam))
 	for i, stmt := range stmtNodes.ProcedureParam {
 		param := &ProcedureParameterVal{
-			DeclName:    stmt.ParamName,
-			DeclType:    stmt.ParamType,
-			DeclCollate: stmt.ParamCollate,
-			ParamType:   stmt.Paramstatus,
+			DeclName:  stmt.ParamName,
+			DeclType:  stmt.ParamType,
+			ParamType: stmt.Paramstatus,
+		}
+		_, collate := b.ctx.GetSessionVars().GetCharsetInfo()
+		err := b.setDefVal(param.DeclType, collate)
+		if err != nil {
+			return nil, err
 		}
 		mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 		// Handle input function.
-		var err error
 		expr, _, err := b.rewrite(ctx, node.Procedure.Args[i], mockTablePlan, nil, true)
 		if err != nil {
 			return nil, err
@@ -228,20 +236,20 @@ func (b *PlanBuilder) buildCallParamPlan(ctx context.Context, stmtNodes *ast.Pro
 }
 
 // buildCallBodyPlan Generate an execution plan based on the stored procedure structure.
-func (b *PlanBuilder) buildCallBodyPlan(ctx context.Context, stmtNodes *ast.ProcedureInfo) (basebody ProcedureBaseBody, err error) {
+func (b *PlanBuilder) buildCallBodyPlan(ctx context.Context, stmtNodes *ast.ProcedureInfo, collate string) (basebody ProcedureBaseBody, err error) {
 	switch stmtNodes.ProcedureBody.(type) {
 	// Analyze block structure to generate execution plan.
 	case *ast.ProcedureBlock:
 		block := &ProcedureBlock{}
 		stmtbody := make([]ProcedureBaseBody, 0, len(stmtNodes.ProcedureBody.(*ast.ProcedureBlock).ProcedureProcStmts))
 		// Analyze block internal variables.
-		vars, err := b.getBodyVar(ctx, stmtNodes.ProcedureBody.(*ast.ProcedureBlock))
+		vars, err := b.getBodyVar(ctx, stmtNodes.ProcedureBody.(*ast.ProcedureBlock), collate)
 		if err != nil {
 			return nil, err
 		}
 		block.Vars = vars
 		for _, stmt := range stmtNodes.ProcedureBody.(*ast.ProcedureBlock).ProcedureProcStmts {
-			body, err := b.buildProcedureNode(ctx, stmt)
+			body, err := b.buildProcedureNode(ctx, stmt, collate)
 			if err != nil {
 				return nil, err
 			}
@@ -296,7 +304,7 @@ func (b *PlanBuilder) buildCallProcedure(ctx context.Context, node *ast.CallStmt
 		_ = b.ctx.GetSessionVars().SetSystemVar(variable.SQLModeVar, sqlModeSave)
 		return nil, err
 	}
-	plan, err := b.analysiStructure(ctx, stmtNodes, node)
+	plan, err := b.analysiStructure(ctx, stmtNodes, node, procedureInfo.CollationConnection)
 	if err != nil {
 		_ = b.ctx.GetSessionVars().SetSystemVar(variable.SQLModeVar, sqlModeSave)
 		return nil, err
@@ -351,10 +359,84 @@ func fetchProcdureInfo(sctx sessionctx.Context, name, db string) (*Procedurebody
 		return nil, errors.New("Multiple stored procedures found in table " + mysql.Routines)
 	}
 	procedurebodyInfo := &ProcedurebodyInfo{}
-	procedurebodyInfo.Procedurebody = " CREATE PROCEDURE " + name + "(" + rows[0].GetString(3) + ") \n" + rows[0].GetString(2)
+	procedurebodyInfo.Name = rows[0].GetString(0)
+	procedurebodyInfo.Procedurebody = " CREATE PROCEDURE " + rows[0].GetString(0) + "(" + rows[0].GetString(3) + ") \n" + rows[0].GetString(2)
 	procedurebodyInfo.SqlMode = rows[0].GetSet(1).String()
 	procedurebodyInfo.CharacterSetClient = rows[0].GetString(4)
 	procedurebodyInfo.CollationConnection = rows[0].GetString(5)
 	procedurebodyInfo.ShemaCollation = rows[0].GetString(6)
 	return procedurebodyInfo, nil
+}
+
+func (b *PlanBuilder) setDefVal(tp *types.FieldType, collate string) error {
+	if tp.GetFlen() != types.UnspecifiedLength || tp.GetDecimal() != types.UnspecifiedLength {
+		return nil
+	}
+	defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(tp.GetType())
+	switch tp.GetType() {
+	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDuration:
+		tp.SetFlen(defaultFlen)
+	case mysql.TypeDouble, mysql.TypeFloat:
+		tp.SetFlen(defaultFlen)
+		tp.SetDecimal(defaultDecimal)
+
+	case mysql.TypeNewDecimal:
+		tp.SetFlen(defaultFlen)
+		tp.SetDecimal(defaultDecimal)
+
+	case mysql.TypeBit, mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString:
+		tp.SetFlen(defaultFlen)
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		tp.SetFlen(defaultFlen)
+
+	case mysql.TypeYear:
+		tp.SetFlen(defaultFlen)
+	}
+	if typesNeedCharset(tp.GetType()) {
+		err := b.setFieldValue(tp, collate)
+		if err != nil {
+			return err
+		}
+	} else {
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CharsetBin)
+	}
+	return nil
+}
+
+func typesNeedCharset(tp byte) bool {
+	switch tp {
+	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString,
+		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
+		mysql.TypeEnum, mysql.TypeSet:
+		return true
+	}
+	return false
+}
+
+func (b *PlanBuilder) setFieldValue(tp *types.FieldType, collate string) error {
+	if tp.GetCharset() == "" && tp.GetCollate() == "" {
+		tp.SetCollate(collate)
+		cs, err := charset.GetCollationByName(tp.GetCharset())
+		if err != nil {
+			return err
+		}
+		tp.SetCharset(cs.CharsetName)
+		return nil
+	}
+	if tp.GetCharset() != "" {
+		collate, err := charset.GetDefaultCollation(tp.GetCharset())
+		if err != nil {
+			return err
+		}
+		tp.SetCollate(collate)
+		return nil
+	} else {
+		cs, err := charset.GetCollationByName(tp.GetCharset())
+		if err != nil {
+			return err
+		}
+		tp.SetCharset(cs.CharsetName)
+	}
+	return nil
 }

@@ -104,7 +104,7 @@ func TestCreateShowDropProcedure(t *testing.T) {
 			"select a.id,a.username,a.password,a.age,a.sex,ad.score from user a right join user_score ad on a.id = ad.user_id where a.id > 10 and a.id < 50;" +
 			"select a.id,a.username,a.password,a.age,a.sex,ad.score from user a left join user_score ad on a.id = ad.user_id where a.id in (select user_id from user_score where score > 90 and score < 99 ) " +
 			"union select a.id,a.username,a.password,a.age,a.sex,ad.score from user a left join user_score ad on a.id = ad.user_id where a.id in (select user_id from user_score where score > 30 and score < 70 ); end;",
-		//     block recursion
+		// block recursion
 		"create procedure proc_13() begin select @a; begin select @b; end; end",
 		"create procedure proc_14() begin select @a; insert into t2 select * from t1; begin select @b;update t2 set id = 1; end; end",
 		// test declared variable type
@@ -164,6 +164,9 @@ func TestCreateShowDropProcedure(t *testing.T) {
 		tk.MustExec("drop procedure " + name)
 	}
 
+	tk.MustExec("create procedure sP_test1(id int) begin select@b; end;")
+	tk.MustQuery("show create procedure sp_test1").Check(testkit.Rows("sP_test1 ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION  CREATE PROCEDURE `sP_test1`(id int) begin select@b; end utf8mb4 utf8mb4_bin utf8mb4_bin"))
+	tk.MustExec("drop procedure sp_test1")
 	tk.MustGetErrCode("drop procedure proc_1", 1305)
 	tk.MustExec("drop procedure if exists proc_1")
 }
@@ -706,4 +709,147 @@ func initEnv(tk *testkit.TestKit) {
 func destroyEnv(tk *testkit.TestKit) {
 	dropTable(tk)
 	dropProcedure(tk)
+}
+
+func TestCallInOutParam(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("create PROCEDURE var1(in sp1 int) begin select sp1 ; end;")
+	// data
+	tk.MustExec("call var1(1)")
+	tk.Res[0].Check(testkit.Rows("1"))
+	tk.ClearProcedureRes()
+	// str
+	tk.MustExec("call var1('1')")
+	tk.Res[0].Check(testkit.Rows("1"))
+	tk.ClearProcedureRes()
+	// variables
+	tk.MustExec("set @a = 1;call var1(@a)")
+	tk.Res[0].Check(testkit.Rows("1"))
+	tk.ClearProcedureRes()
+	// function
+	tk.MustExec("call var1(CHAR_LENGTH('1bcdsbcz'))")
+	tk.Res[0].Check(testkit.Rows("8"))
+	tk.ClearProcedureRes()
+	// error
+	tk.MustGetErrCode("call var1('1bcdsbcz')", 1292)
+	// min/max
+	tk.MustExec("call var1(2147483647)")
+	tk.Res[0].Check(testkit.Rows("2147483647"))
+	tk.ClearProcedureRes()
+	tk.MustGetErrCode("call var1(2147483648)", 1690)
+	tk.MustExec("call var1(-2147483648)")
+	tk.Res[0].Check(testkit.Rows("-2147483648"))
+	tk.ClearProcedureRes()
+	tk.MustGetErrCode("call var1(-2147483649)", 1690)
+	tk.MustExec("call var1(21.242)")
+	tk.Res[0].Check(testkit.Rows("21"))
+	tk.ClearProcedureRes()
+	//max/min
+	tk.MustExec("call var1(CHAR_LENGTH('shdauhcuiahds'))")
+	tk.Res[0].Check(testkit.Rows("13"))
+	tk.ClearProcedureRes()
+
+	tk.MustExec("create PROCEDURE var2(in sp1 varchar(10)) begin select sp1 ; end;")
+	tk.MustExec("call var2(1)")
+	tk.Res[0].Check(testkit.Rows("1"))
+	tk.ClearProcedureRes()
+	tk.MustExec("call var2('22345')")
+	tk.Res[0].Check(testkit.Rows("22345"))
+	tk.ClearProcedureRes()
+	tk.MustGetErrCode("call var2('012345678910')", 1406)
+	tk.ClearProcedureRes()
+	tk.MustExec("set @a = '2222';call var2(@a)")
+	tk.Res[0].Check(testkit.Rows("2222"))
+	tk.ClearProcedureRes()
+	tk.MustExec("set @a = 2222;call var2(@a)")
+	tk.Res[0].Check(testkit.Rows("2222"))
+	tk.ClearProcedureRes()
+	tk.MustExec("call var2(LOWER('FTYGIPJO'))")
+	tk.Res[0].Check(testkit.Rows("ftygipjo"))
+	tk.ClearProcedureRes()
+
+	tk.MustExec("create PROCEDURE var3(sp1 varchar(10),in sp2 float) begin select sp1,sp2 ; end;")
+	tk.MustExec("call var3(1,2.1)")
+	tk.Res[0].Check(testkit.Rows("1 2.1"))
+	tk.ClearProcedureRes()
+	tk.MustExec(" set @a = 1.2; call var3(@a,@a)")
+	tk.Res[0].Check(testkit.Rows("1.2 1.2"))
+	tk.ClearProcedureRes()
+
+	tk.MustExec("create PROCEDURE var4(in sp1 datetime,out sp2 datetime) begin select sp1; set sp2 = sp1; end;")
+	tk.MustExec("call var4('2023-02-03 11:34:22',@a)")
+	tk.Res[0].Check(testkit.Rows("2023-02-03 11:34:22"))
+	tk.ClearProcedureRes()
+	tk.MustQuery("select @a").Check(testkit.Rows("2023-02-03 11:34:22"))
+	// Enum
+	tk.MustExec("create PROCEDURE var5(in sp1 Enum('a','b','c'),out sp2  Enum('a','b','c')) begin select sp1; set sp2 = sp1; end;")
+	tk.MustExec("call var5('b',@a)")
+	tk.Res[0].Check(testkit.Rows("b"))
+	tk.ClearProcedureRes()
+	tk.MustQuery("select @a").Check(testkit.Rows("b"))
+	// inout
+	tk.MustExec("create PROCEDURE var6(inout sp1 varchar(100)) begin select sp1; end;")
+	tk.MustGetErrCode("call var6('b')", 1414)
+	tk.MustGetErrCode("call var6(now())", 1414)
+	tk.MustExec("set @a =cd; call var6(@a)")
+	tk.Res[0].Check(testkit.Rows("cd"))
+	tk.ClearProcedureRes()
+	tk.MustQuery("select @a").Check(testkit.Rows("cd"))
+	// SET
+	tk.MustExec("create PROCEDURE var7(in sp1 SET('a','b','c'),out sp2  SET('a','b','c')) begin select sp1; set sp2 = sp1; end;")
+	tk.MustExec("call var7('b,a',@a)")
+	tk.Res[0].Check(testkit.Rows("a,b"))
+	tk.ClearProcedureRes()
+	// timestamp
+	tk.MustExec("create PROCEDURE var8(in sp1 timestamp,out sp2  timestamp) begin select sp1; set sp2 = sp1; end;")
+	tk.MustExec("set timestamp = 1675499582;call var8(now(),@a)")
+	tk.Res[0].Check(testkit.Rows("2023-02-04 16:33:02"))
+	tk.ClearProcedureRes()
+	tk.MustQuery("select @a").Check(testkit.Rows("2023-02-04 16:33:02"))
+}
+
+func TestCallVarParam(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	// int
+	sql := `create PROCEDURE var1() begin declare id int;set id = 1; select id; end;`
+	tk.MustExec(sql)
+	tk.MustExec("call var1")
+	tk.Res[0].Check(testkit.Rows("1"))
+	tk.ClearProcedureRes()
+	sql = `create PROCEDURE var2() begin declare id varchar(10);set id = 1; select id; end;`
+	tk.MustExec(sql)
+	tk.MustExec("call var2")
+	tk.Res[0].Check(testkit.Rows("1"))
+	tk.ClearProcedureRes()
+	sql = `create PROCEDURE var3() begin declare id bigint;set id = 1; select id; end;`
+	tk.MustExec(sql)
+	tk.MustExec("call var3")
+	tk.Res[0].Check(testkit.Rows("1"))
+	tk.ClearProcedureRes()
+	sql = `create PROCEDURE var4() begin declare id char(10);set id = 1; select id; end;`
+	tk.MustExec(sql)
+	tk.MustExec("call var4")
+	tk.Res[0].Check(testkit.Rows("1"))
+	tk.ClearProcedureRes()
+	sql = `create PROCEDURE var5() begin declare id decimal(10,2);set id = 1.2; select id; end;`
+	tk.MustExec(sql)
+	tk.MustExec("call var5")
+	tk.Res[0].Check(testkit.Rows("1.20"))
+	tk.ClearProcedureRes()
+	sql = `create PROCEDURE var6() begin declare id datetime;set id = "2023-02-03 11:34:22"; select id; end;`
+	tk.MustExec(sql)
+	tk.MustExec("call var6")
+	tk.Res[0].Check(testkit.Rows("2023-02-03 11:34:22"))
+	tk.ClearProcedureRes()
+	sql = `create PROCEDURE var7() begin declare id TIMESTAMP;set id = "2023-02-03 11:34:22"; select id; end;`
+	tk.MustExec(sql)
+	tk.MustExec("call var7")
+	tk.Res[0].Check(testkit.Rows("2023-02-03 11:34:22"))
+	tk.ClearProcedureRes()
 }

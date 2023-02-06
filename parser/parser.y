@@ -14691,13 +14691,12 @@ SpPdparams:
 	}
 
 SpPdparam:
-	SpOptInout Identifier Type OptCollate
+	SpOptInout Identifier Type
 	{
 		x := &ast.StoreParameter{
-			Paramstatus:  $1.(int),
-			ParamType:    $3.(*types.FieldType),
-			ParamName:    $2,
-			ParamCollate: $4,
+			Paramstatus: $1.(int),
+			ParamType:   $3.(*types.FieldType),
+			ParamName:   $2,
 		}
 		$$ = x
 	}
@@ -14778,19 +14777,16 @@ ProcedureDecl:
 	"DECLARE"/*$1*/
 	 ProcedureDeclIdents/*$2*/
 	 Type/*$3*/
-	 OptCollate/*$4*/
 	 ProcedureOptDefault
 	/*$5*/
 	{
 		x := &ast.ProcedureDecl{
-			DeclNames:   $2.([]string),
-			DeclType:    $3.(*types.FieldType),
-			DeclCollate: $4,
+			DeclNames: $2.([]string),
+			DeclType:  $3.(*types.FieldType),
 		}
-		if $5 != nil {
-			x.DeclDefault = $5.(ast.ExprNode)
+		if $4 != nil {
+			x.DeclDefault = $4.(ast.ExprNode)
 		}
-		x.DeclType.SetCollate($4)
 		$$ = x
 	}
 

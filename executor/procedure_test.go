@@ -612,6 +612,10 @@ func TestSelectInsert(t *testing.T) {
 	userInfoRows := newTk.MustQuery("select * from user_info").Rows()
 	selectRows := newTk.MustQuery(testcases[0].selectSQL).Rows()
 	require.Equal(t, len(userInfoRows), len(selectRows))
+	newTk.MustExec("UPDATE user_info ui SET ui.username = (SELECT CONCAT(u.username, \"-\" ,ua.address) FROM user u left join user_address ua on u.id = ua.user_id WHERE u.id = 1) where ui.user_id = 1")
+	userInfoNameRows := newTk.MustQuery("select username from user_info where user_id = 1").Rows()
+	userNameRows := newTk.MustQuery("SELECT CONCAT(u.username, \"-\" ,ua.address) FROM user u left join user_address ua on u.id = ua.user_id WHERE u.id = 1").Rows()
+	require.Equal(t, userInfoNameRows[0], userNameRows[0])
 	destroyEnv(tk)
 }
 
@@ -869,7 +873,7 @@ func TestCallVarParam(t *testing.T) {
 	tk.Res[0].Check(testkit.Rows("\x00"))
 	tk.ClearProcedureRes()
 	// variables cover
-	sql = `create PROCEDURE var9() begin declare id bit;set id = 0; select id; 
+	sql = `create PROCEDURE var9() begin declare id bit;set id = 0; select id;
 	begin declare id int;set id = 1; select id;  end; select id; end;`
 	tk.MustExec(sql)
 	tk.MustExec("call var9")

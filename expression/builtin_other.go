@@ -728,10 +728,19 @@ func (c *setVarFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if argTp == types.ETTimestamp || argTp == types.ETDuration || argTp == types.ETJson {
 		argTp = types.ETString
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, argTp, types.ETString, argTp)
-	if err != nil {
-		return nil, err
+	var bf baseBuiltinFunc
+	if len(args) == 3 {
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, argTp, types.ETString, argTp, types.ETInt)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, argTp, types.ETString, argTp)
+		if err != nil {
+			return nil, err
+		}
 	}
+
 	bf.tp.SetFlenUnderLimit(args[1].GetType().GetFlen())
 	switch argTp {
 	case types.ETString:
@@ -772,6 +781,23 @@ func (b *builtinSetStringVarSig) evalString(row chunk.Row) (res string, isNull b
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+	if len(b.args) == 3 {
+		status, isNull, err := b.args[2].EvalInt(b.ctx, row)
+		if isNull || err != nil {
+			return "", isNull, err
+		}
+		if status == 1 {
+			err := sessionVars.UpdateProcedureVariable(varName, datum)
+			if err != nil {
+				return "", isNull, err
+			}
+			res, err = datum.ToString()
+			if err != nil {
+				return "", isNull, err
+			}
+			return res, false, nil
+		}
+	}
 	res, err = datum.ToString()
 	if err != nil {
 		return "", isNull, err
@@ -802,6 +828,19 @@ func (b *builtinSetRealVarSig) evalReal(row chunk.Row) (res float64, isNull bool
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
+	if len(b.args) == 3 {
+		status, isNull, err := b.args[2].EvalInt(b.ctx, row)
+		if isNull || err != nil {
+			return 0, isNull, err
+		}
+		if status == 1 {
+			err := sessionVars.UpdateProcedureVariable(varName, datum)
+			if err != nil {
+				return 0, isNull, err
+			}
+			return datum.GetFloat64(), false, nil
+		}
+	}
 	res = datum.GetFloat64()
 	varName = strings.ToLower(varName)
 	sessionVars.SetUserVarVal(varName, datum)
@@ -828,6 +867,19 @@ func (b *builtinSetDecimalVarSig) evalDecimal(row chunk.Row) (*types.MyDecimal, 
 	isNull = datum.IsNull()
 	if isNull || err != nil {
 		return nil, isNull, err
+	}
+	if len(b.args) == 3 {
+		status, isNull, err := b.args[2].EvalInt(b.ctx, row)
+		if isNull || err != nil {
+			return nil, isNull, err
+		}
+		if status == 1 {
+			err := sessionVars.UpdateProcedureVariable(varName, datum)
+			if err != nil {
+				return nil, isNull, err
+			}
+			return datum.GetMysqlDecimal(), false, nil
+		}
 	}
 	res := datum.GetMysqlDecimal()
 	varName = strings.ToLower(varName)
@@ -856,6 +908,19 @@ func (b *builtinSetIntVarSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
+	if len(b.args) == 3 {
+		status, isNull, err := b.args[2].EvalInt(b.ctx, row)
+		if isNull || err != nil {
+			return 0, isNull, err
+		}
+		if status == 1 {
+			err := sessionVars.UpdateProcedureVariable(varName, datum)
+			if err != nil {
+				return 0, isNull, err
+			}
+			return datum.GetInt64(), false, nil
+		}
+	}
 	res := datum.GetInt64()
 	varName = strings.ToLower(varName)
 	sessionVars.SetUserVarVal(varName, datum)
@@ -882,6 +947,19 @@ func (b *builtinSetTimeVarSig) evalTime(row chunk.Row) (types.Time, bool, error)
 	if err != nil || datum.IsNull() {
 		return types.ZeroTime, datum.IsNull(), handleInvalidTimeError(b.ctx, err)
 	}
+	if len(b.args) == 3 {
+		status, isNull, err := b.args[2].EvalInt(b.ctx, row)
+		if isNull || err != nil {
+			return types.ZeroTime, isNull, err
+		}
+		if status == 1 {
+			err := sessionVars.UpdateProcedureVariable(varName, datum)
+			if err != nil {
+				return types.ZeroTime, isNull, err
+			}
+			return datum.GetMysqlTime(), false, nil
+		}
+	}
 	res := datum.GetMysqlTime()
 	varName = strings.ToLower(varName)
 	sessionVars.SetUserVarVal(varName, datum)
@@ -889,21 +967,21 @@ func (b *builtinSetTimeVarSig) evalTime(row chunk.Row) (types.Time, bool, error)
 }
 
 // BuildGetVarFunction builds a GetVar ScalarFunction from the Expression.
-func BuildGetVarFunction(ctx sessionctx.Context, expr Expression, retType *types.FieldType) (Expression, error) {
+func BuildGetVarFunction(ctx sessionctx.Context, retType *types.FieldType, expr ...Expression) (Expression, error) {
 	var fc functionClass
 	switch retType.EvalType() {
 	case types.ETInt:
-		fc = &getIntVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, retType}}
+		fc = &getIntVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 2}, retType}}
 	case types.ETDecimal:
-		fc = &getDecimalVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, retType}}
+		fc = &getDecimalVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 2}, retType}}
 	case types.ETReal:
-		fc = &getRealVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, retType}}
+		fc = &getRealVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 2}, retType}}
 	case types.ETDatetime:
-		fc = &getTimeVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, retType}}
+		fc = &getTimeVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 2}, retType}}
 	default:
-		fc = &getStringVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, retType}}
+		fc = &getStringVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 2}, retType}}
 	}
-	f, err := fc.getFunction(ctx, []Expression{expr})
+	f, err := fc.getFunction(ctx, expr)
 	if err != nil {
 		return nil, err
 	}
@@ -931,10 +1009,19 @@ func (c *getStringVarFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
-	if err != nil {
-		return nil, err
+	var bf baseBuiltinFunc
+	if len(args) == 2 {
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETInt)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+		if err != nil {
+			return nil, err
+		}
 	}
+
 	bf.tp.SetFlen(c.tp.GetFlen())
 	if len(c.tp.GetCharset()) > 0 {
 		bf.tp.SetCharset(c.tp.GetCharset())
@@ -959,6 +1046,25 @@ func (b *builtinGetStringVarSig) evalString(row chunk.Row) (string, bool, error)
 	varName, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
+	}
+	if len(b.args) == 2 {
+		status, isNull, err := b.args[1].EvalInt(b.ctx, row)
+		if isNull || err != nil {
+			return "", isNull, err
+		}
+		if status == 1 {
+			if _, v, noFind, err := sessionVars.GetProcedureVariable(varName); !noFind || err != nil {
+				if err != nil {
+					return "", false, err
+				}
+				res, err := v.ToString()
+				if err != nil {
+					return "", false, err
+				}
+				return res, false, nil
+			}
+			return "", true, nil
+		}
 	}
 	varName = strings.ToLower(varName)
 	if v, ok := sessionVars.GetUserVarVal(varName); ok {
@@ -986,9 +1092,17 @@ func (c *getIntVarFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
-	if err != nil {
-		return nil, err
+	var bf baseBuiltinFunc
+	if len(args) == 2 {
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETInt)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+		if err != nil {
+			return nil, err
+		}
 	}
 	bf.tp.SetFlen(c.tp.GetFlen())
 	bf.tp.SetFlag(c.tp.GetFlag())
@@ -1012,6 +1126,22 @@ func (b *builtinGetIntVarSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
+	if len(b.args) == 2 {
+		status, isNull, err := b.args[1].EvalInt(b.ctx, row)
+		if isNull || err != nil {
+			return 0, isNull, err
+		}
+		if status == 1 {
+			if _, v, noFind, err := sessionVars.GetProcedureVariable(varName); !noFind || err != nil {
+				if err != nil {
+					return 0, false, err
+				}
+				res := v.GetInt64()
+				return res, false, nil
+			}
+			return 0, true, nil
+		}
+	}
 	varName = strings.ToLower(varName)
 	if v, ok := sessionVars.GetUserVarVal(varName); ok {
 		return v.GetInt64(), false, nil
@@ -1027,9 +1157,17 @@ func (c *getRealVarFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETString)
-	if err != nil {
-		return nil, err
+	var bf baseBuiltinFunc
+	if len(args) == 2 {
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETString, types.ETInt)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETString)
+		if err != nil {
+			return nil, err
+		}
 	}
 	bf.tp.SetFlen(c.tp.GetFlen())
 	sig = &builtinGetRealVarSig{bf}
@@ -1052,6 +1190,22 @@ func (b *builtinGetRealVarSig) evalReal(row chunk.Row) (float64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
+	if len(b.args) == 2 {
+		status, isNull, err := b.args[1].EvalInt(b.ctx, row)
+		if isNull || err != nil {
+			return 0, isNull, err
+		}
+		if status == 1 {
+			if _, v, noFind, err := sessionVars.GetProcedureVariable(varName); !noFind || err != nil {
+				if err != nil {
+					return 0, false, err
+				}
+				res := v.GetFloat64()
+				return res, false, nil
+			}
+			return 0, true, nil
+		}
+	}
 	varName = strings.ToLower(varName)
 	if v, ok := sessionVars.GetUserVarVal(varName); ok {
 		return v.GetFloat64(), false, nil
@@ -1067,9 +1221,17 @@ func (c *getDecimalVarFunctionClass) getFunction(ctx sessionctx.Context, args []
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDecimal, types.ETString)
-	if err != nil {
-		return nil, err
+	var bf baseBuiltinFunc
+	if len(args) == 2 {
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDecimal, types.ETString, types.ETInt)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDecimal, types.ETString)
+		if err != nil {
+			return nil, err
+		}
 	}
 	bf.tp.SetFlenUnderLimit(c.tp.GetFlen())
 	sig = &builtinGetDecimalVarSig{bf}
@@ -1092,6 +1254,22 @@ func (b *builtinGetDecimalVarSig) evalDecimal(row chunk.Row) (*types.MyDecimal, 
 	if isNull || err != nil {
 		return nil, isNull, err
 	}
+	if len(b.args) == 2 {
+		status, isNull, err := b.args[1].EvalInt(b.ctx, row)
+		if isNull || err != nil {
+			return nil, isNull, err
+		}
+		if status == 1 {
+			if _, v, noFind, err := sessionVars.GetProcedureVariable(varName); !noFind || err != nil {
+				if err != nil {
+					return nil, false, err
+				}
+				res := v.GetMysqlDecimal()
+				return res, false, nil
+			}
+			return nil, true, nil
+		}
+	}
 	varName = strings.ToLower(varName)
 	if v, ok := sessionVars.GetUserVarVal(varName); ok {
 		return v.GetMysqlDecimal(), false, nil
@@ -1107,9 +1285,17 @@ func (c *getTimeVarFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETString)
-	if err != nil {
-		return nil, err
+	var bf baseBuiltinFunc
+	if len(args) == 2 {
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETString, types.ETInt)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETString)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if c.tp.GetType() == mysql.TypeDatetime {
 		fsp := c.tp.GetFlen() - mysql.MaxDatetimeWidthNoFsp
@@ -1139,6 +1325,22 @@ func (b *builtinGetTimeVarSig) evalTime(row chunk.Row) (types.Time, bool, error)
 	varName, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return types.ZeroTime, isNull, err
+	}
+	if len(b.args) == 2 {
+		status, isNull, err := b.args[1].EvalInt(b.ctx, row)
+		if isNull || err != nil {
+			return types.ZeroTime, isNull, err
+		}
+		if status == 1 {
+			if _, v, noFind, err := sessionVars.GetProcedureVariable(varName); !noFind || err != nil {
+				if err != nil {
+					return types.ZeroTime, false, err
+				}
+				res := v.GetMysqlTime()
+				return res, false, nil
+			}
+			return types.ZeroTime, true, nil
+		}
 	}
 	varName = strings.ToLower(varName)
 	if v, ok := sessionVars.GetUserVarVal(varName); ok {

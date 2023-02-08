@@ -2124,6 +2124,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
+	case *ast.CallStmt, *ast.ProcedureInfo:
+		sc.TruncateAsWarning = !vars.StrictSQLMode
+		sc.DividedByZeroAsWarning = !vars.StrictSQLMode
+		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
+		sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || sc.AllowInvalidDate
 	default:
 		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true

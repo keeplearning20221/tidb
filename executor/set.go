@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table/temptable"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
@@ -321,27 +320,19 @@ func (e *SetExecutor) setSPVariable(name string, v *expression.VarAssignment) (b
 	if !e.ctx.GetSessionVars().GetCallProcedure() {
 		return true, nil
 	}
-	varType, _, notFind, err := e.ctx.GetSessionVars().GetProcedureVariable(name)
+	_, _, notFind, err := e.ctx.GetSessionVars().GetProcedureVariable(name)
 	if err != nil {
 		return false, err
 	}
 	if notFind {
 		return true, nil
 	}
-	datum, err := e.getSPVarValue(v, varType)
+	datum, err := v.Expr.Eval(chunk.Row{})
 	if err != nil {
 		return false, err
 	}
-	e.ctx.GetSessionVars().UpdateProcedureVariable(name, datum)
-	return false, nil
-}
-
-func (e *SetExecutor) getSPVarValue(v *expression.VarAssignment, tp *types.FieldType) (types.Datum, error) {
-	nativeVal, err := v.Expr.Eval(chunk.Row{})
-	if err != nil || nativeVal.IsNull() {
-		return types.NewDatum(""), err
-	}
-
-	varVar, err := nativeVal.Clone().ConvertTo(e.ctx.GetSessionVars().StmtCtx, tp)
-	return varVar, err
+	sc := e.ctx.GetSessionVars().StmtCtx
+	sc.IgnoreTruncate = false
+	err = e.ctx.GetSessionVars().UpdateProcedureVariable(name, datum)
+	return false, err
 }

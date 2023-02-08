@@ -2435,13 +2435,22 @@ func (s *SessionVars) CheckProcedureVariable(name string) bool {
 	return true
 }
 
-func (s *SessionVars) UpdateProcedureVariable(name string, datum types.Datum) {
+func (s *SessionVars) UpdateProcedureVariable(name string, datum types.Datum) error {
 	if !s.inCallProcedure {
-		return
+		return nil
 	}
 	s.procedureVars.lock.Lock()
 	defer s.procedureVars.lock.Unlock()
-	s.procedureVars.values[name] = datum
+	tp, ok := s.procedureVars.types[name]
+	if !ok {
+		return ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
+	varVar, err := datum.Clone().ConvertTo(s.StmtCtx, tp)
+	if err != nil {
+		return err
+	}
+	s.procedureVars.values[name] = varVar
+	return nil
 }
 
 func (s *SessionVars) DeleteProcedureVariable(name string, mayCover bool) error {

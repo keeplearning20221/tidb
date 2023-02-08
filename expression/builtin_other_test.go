@@ -163,7 +163,7 @@ func TestGetVar(t *testing.T) {
 		if !ok {
 			tp = types.NewFieldType(mysql.TypeVarString)
 		}
-		fn, err := BuildGetVarFunction(ctx, datumsToConstants(types.MakeDatums(tc.args...))[0], tp)
+		fn, err := BuildGetVarFunction(ctx, tp, datumsToConstants(types.MakeDatums(tc.args...))[0])
 		require.NoError(t, err)
 		d, err := fn.Eval(chunk.Row{})
 		require.NoError(t, err)

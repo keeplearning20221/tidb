@@ -16,6 +16,7 @@ package executor_test
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -778,10 +779,10 @@ func TestCallInOutParam(t *testing.T) {
 
 	tk.MustExec("create PROCEDURE var3(sp1 varchar(10),in sp2 float) begin select sp1,sp2 ; end;")
 	tk.MustExec("call var3(1,2.1)")
-	tk.Res[0].Check(testkit.Rows("1 2.1"))
+	tk.Res[0].Check(testkit.Rows("1 2.0999999046325684"))
 	tk.ClearProcedureRes()
 	tk.MustExec(" set @a = 1.2; call var3(@a,@a)")
-	tk.Res[0].Check(testkit.Rows("1.2 1.2"))
+	tk.Res[0].Check(testkit.Rows("1.2 1.2000000476837158"))
 	tk.ClearProcedureRes()
 
 	tk.MustExec("create PROCEDURE var4(in sp1 datetime,out sp2 datetime) begin select sp1; set sp2 = sp1; end;")
@@ -866,16 +867,16 @@ func TestCallVarParam(t *testing.T) {
 	sql = `create PROCEDURE var8() begin declare id bit;set id = 0; select id; end;`
 	tk.MustExec(sql)
 	tk.MustExec("call var8")
-	tk.Res[0].Check(testkit.Rows("\x00"))
+	tk.Res[0].Check(testkit.Rows("0"))
 	tk.ClearProcedureRes()
 	// variables cover
 	sql = `create PROCEDURE var9() begin declare id bit;set id = 0; select id; 
 	begin declare id int;set id = 1; select id;  end; select id; end;`
 	tk.MustExec(sql)
 	tk.MustExec("call var9")
-	tk.Res[0].Check(testkit.Rows("\x00"))
+	tk.Res[0].Check(testkit.Rows("0"))
 	tk.Res[1].Check(testkit.Rows("1"))
-	tk.Res[2].Check(testkit.Rows("\x00"))
+	tk.Res[2].Check(testkit.Rows("0"))
 	tk.ClearProcedureRes()
 	sql = `create PROCEDURE var10() begin declare id1 varchar(10);declare id2 varchar(10);set id1 = 'ss';select id1; set id2 = 'ss';select id2; begin
 	declare id1 varchar(10);declare id2 varchar(10);set id1 = 1; set id2 = 2; select id1; select id2;  end; select id1; select id2; end;`
@@ -941,5 +942,109 @@ func TestCallVarDef(t *testing.T) {
 	sql = `create PROCEDURE var6() begin declare id varchar(2) default 3; declare id2 varchar(2) default id;select id; select id2;end;`
 	tk.MustExec(sql)
 	tk.MustGetErrCode("call var6", 1054)
+	tk.ClearProcedureRes()
+
+	sql = `create PROCEDURE var7() begin declare id varchar(2) default 3; set id = 100;end;`
+	tk.MustGetErrCode(sql, 1406)
+	tk.ClearProcedureRes()
+
+	sql = `create PROCEDURE var8() begin declare id varchar(2) default 3; set id := 9; select id;end;`
+	tk.MustExec(sql)
+	tk.MustExec("call var8")
+	tk.Res[0].Check(testkit.Rows("9"))
+	tk.ClearProcedureRes()
+}
+
+func TestCallInOutInSQL(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `user` ( `id` int(11) NOT NULL, `username` VARCHAR(30) DEFAULT NULL, `password` VARCHAR(30) DEFAULT NULL, " +
+		"`age` int(11) NOT NULL, `sex` int(11) NOT NULL, PRIMARY KEY (`id`), KEY `username` (`username`) ) ENGINE=InnoDB;")
+	tk.MustExec("CREATE TABLE `user_score` ( `id` int(11) NOT NULL, `subject` int(11) NOT NULL, `user_id` int(11) NOT NULL, " +
+		"`score` int(11) NOT NULL, PRIMARY KEY (`id`) ) ENGINE=InnoDB;")
+	tk.MustExec("CREATE TABLE `user_address` ( `id` int(11) NOT NULL, `user_id` int(11) NOT NULL, `address` VARCHAR(30) DEFAULT NULL, " +
+		"PRIMARY KEY (`id`), KEY `address` (`address`) ) ENGINE=InnoDB;")
+	tk.MustExec(`create procedure insert_data(i int, s_i int)  begin insert into user values(i, CONCAT("username-", i),CONCAT("password-", i),FLOOR( 15 ),Mod(i,2));
+		insert into user_score values(s_i, 1, i, FLOOR( 40 + i * 100));
+		set s_i=s_i+1;
+		insert into user_score values(s_i, 2, i, FLOOR( 40 + i * 100));
+		set s_i=s_i+1;
+		insert into user_score values(s_i, 3, i, FLOOR( 40 + i * 100));
+		set s_i=s_i+1;
+		insert into user_score values(s_i, 4, i, FLOOR( 40 + i * 100));
+		set s_i=s_i+1;
+		insert into user_score values(s_i, 5, i, FLOOR( 40 + i * 100));
+		set s_i=s_i+1;
+		insert into user_address values(i, i, CONCAT("useraddress-", i));
+		set i=i+1;  end;`)
+	for i := 1; i <= 100; i = i + 1 {
+		sql := fmt.Sprintf("call insert_data(%d,%d)", i, 5*i)
+		tk.MustExec(sql)
+	}
+	tk.MustExec(`create procedure select1(id int)begin select * from user where user.id > id; end;`)
+	sql := fmt.Sprintf("call select1(%d)", 3)
+	tk.MustExec(sql)
+	tk.MustQuery("select * from user where user.id >3").Sort().Check(tk.Res[0].Sort().Rows())
+	tk.ClearProcedureRes()
+
+	tk.MustExec(`create procedure select2(id int) select * from user where user.id > id;`)
+	sql = fmt.Sprintf("call select2(%d)", 3)
+	tk.MustExec(sql)
+	tk.MustQuery("select * from user where user.id >3").Sort().Check(tk.Res[0].Sort().Rows())
+	tk.ClearProcedureRes()
+
+	tk.MustExec(`create procedure select3(id int)begin select * from user where user.id > id; set id = 10;
+	select * from user where user.id > id; end;`)
+	sql = fmt.Sprintf("call select3(%d)", 3)
+	tk.MustExec(sql)
+	tk.MustQuery("select * from user where user.id >3").Sort().Check(tk.Res[0].Sort().Rows())
+	tk.MustQuery("select * from user where user.id >10").Sort().Check(tk.Res[1].Sort().Rows())
+	tk.ClearProcedureRes()
+
+	tk.MustExec(`create procedure select4(id int)begin select * from user where user.id > id; set id := 10;
+	select * from user where user.id > id; end;`)
+	sql = fmt.Sprintf("call select4(%d)", 3)
+	tk.MustExec(sql)
+	tk.MustQuery("select * from user where user.id >3").Sort().Check(tk.Res[0].Sort().Rows())
+	tk.MustQuery("select * from user where user.id >10").Sort().Check(tk.Res[1].Sort().Rows())
+	tk.ClearProcedureRes()
+
+	tk.MustExec(`create procedure select5(id int)begin select * from user where user.id > id; set id := 10;
+	select * from user where user.id > id; end;`)
+	sql = fmt.Sprintf("call select5(%d)", 3)
+	tk.MustExec(sql)
+	tk.MustQuery("select * from user where user.id >3").Sort().Check(tk.Res[0].Sort().Rows())
+	tk.MustQuery("select * from user where user.id >10").Sort().Check(tk.Res[1].Sort().Rows())
+	tk.ClearProcedureRes()
+
+	tk.MustExec(`create procedure select6(id int,name char(100))begin update user set username = name where user.id = id;
+	select * from user where user.id = id; end;`)
+	sql = fmt.Sprintf("call select6(%d,'%s')", 3, "test")
+	tk.MustExec(sql)
+	require.Equal(t, len(tk.Res), 1)
+	tk.Res[0].Check(testkit.Rows("3 test password-3 15 1"))
+	tk.ClearProcedureRes()
+
+	tk.MustExec(`create procedure select7(id int,tablename char(100))begin update  tablename set username = 'sss' where user.id = id;
+	select * from user where user.id = id; end;`)
+	sql = fmt.Sprintf("call select7(%d,'%s')", 3, "test")
+	tk.MustGetErrCode(sql, 1146)
+	tk.ClearProcedureRes()
+
+	tk.MustExec(`create procedure select8(id int,tablename char(100))begin 
+	select * from user where user.id = id into outfile 'test.txt'; end;`)
+	sql = fmt.Sprintf("call select8(%d,'%s')", 3, "test")
+	tk.MustExec(sql)
+	tk.ClearProcedureRes()
+	os.Remove("test.txt")
+
+	tk.MustExec(`create procedure select9(id int,name char(100))begin update user set username = LOWER(name) where user.id = id;
+	select * from user where user.id = id; end;`)
+	sql = fmt.Sprintf("call select9(%d,'%s')", 3, "TAAA")
+	tk.MustExec(sql)
+	require.Equal(t, len(tk.Res), 1)
+	tk.Res[0].Check(testkit.Rows("3 taaa password-3 15 1"))
 	tk.ClearProcedureRes()
 }

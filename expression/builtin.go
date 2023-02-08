@@ -837,7 +837,7 @@ var funcs = map[string]functionClass{
 	ast.RegexpReplace:      &regexpReplaceFunctionClass{baseFunctionClass{ast.RegexpReplace, 3, 6}},
 	ast.Case:               &caseWhenFunctionClass{baseFunctionClass{ast.Case, 1, -1}},
 	ast.RowFunc:            &rowFunctionClass{baseFunctionClass{ast.RowFunc, 2, -1}},
-	ast.SetVar:             &setVarFunctionClass{baseFunctionClass{ast.SetVar, 2, 2}},
+	ast.SetVar:             &setVarFunctionClass{baseFunctionClass{ast.SetVar, 2, 3}},
 	ast.BitCount:           &bitCountFunctionClass{baseFunctionClass{ast.BitCount, 1, 1}},
 	ast.GetParam:           &getParamFunctionClass{baseFunctionClass{ast.GetParam, 1, 1}},
 

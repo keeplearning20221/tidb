@@ -2733,18 +2733,43 @@ func (cc *ClientConn) SqlParse(ctx context.Context, sql string) ([]ast.StmtNode,
 	return stmts, nil
 }
 
-func (cc *ClientConn) MultiHanldeNode(ctx context.Context, stmt ast.StmtNode) error {
+func (cc *ClientConn) MultiHanldeNode(ctx context.Context, stmt ast.StmtNode) (err error) {
+	sessVars := cc.ctx.GetSessionVars()
+	var retryable bool
+	var lastStmt ast.StmtNode
+	var expiredStmtTaskID uint64
+	lastStmt = stmt
+
+	defer func() {
+		if lastStmt != nil {
+			cc.onExtensionStmtEnd(lastStmt, sessVars.StmtCtx.TaskID != expiredStmtTaskID, err)
+		}
+	}()
+	// expiredTaskID is the task ID of the previous statement. When executing a stmt,
+	// the StmtCtx will be reinit and the TaskID will change. We can compare the StmtCtx.TaskID
+	// with the previous one to determine whether StmtCtx has been inited for the current stmt.
+	expiredStmtTaskID = sessVars.StmtCtx.TaskID
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
 	if rs != nil {
 		rs.Close()
 	}
 
 	if err != nil {
-		rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
-		if rs != nil {
-			rs.Close()
+		action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, err)
+		if txnErr != nil {
+			err = txnErr
+			return err
 		}
-		return err
+
+		if retryable && action == sessiontxn.StmtActionRetryReady {
+			cc.ctx.GetSessionVars().RetryInfo.Retrying = true
+			rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
+			cc.ctx.GetSessionVars().RetryInfo.Retrying = false
+			if rs != nil {
+				rs.Close()
+			}
+			return err
+		}
 	}
 	return nil
 }

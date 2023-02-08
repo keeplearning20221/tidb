@@ -522,11 +522,19 @@ func (e *ProcedureExec) execDefalutStmt(ctx context.Context, node ast.StmtNode) 
 // execNode implement node execution.
 func (e *ProcedureExec) execNode(ctx context.Context, node ast.StmtNode) error {
 	ast.SetFlag(node)
-	switch node.(type) {
+	switch x := node.(type) {
 	case *ast.SelectStmt:
-		err := e.execWithResult(ctx, node)
-		if err != nil {
-			return err
+		if x.SelectIntoOpt != nil && x.SelectIntoOpt.Tp == ast.SelectIntoOutfile {
+			err := e.execDefalutStmt(ctx, node)
+			if err != nil {
+				return err
+			}
+
+		} else {
+			err := e.execWithResult(ctx, node)
+			if err != nil {
+				return err
+			}
 		}
 
 	case *ast.ExplainStmt:

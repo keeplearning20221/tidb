@@ -1997,13 +1997,15 @@ func (er *expressionRewriter) toTable(v *ast.TableName) {
 }
 
 func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
-	notFind, err := er.searchSpVariables(v.Name.String())
-	if err != nil {
-		er.err = err
-		return
-	}
-	if !notFind {
-		return
+	if v.Table.String() == "" && er.sctx.GetSessionVars().GetCallProcedure() {
+		notFind, err := er.searchSpVariables(v.Name.String())
+		if err != nil {
+			er.err = err
+			return
+		}
+		if !notFind {
+			return
+		}
 	}
 	idx, err := expression.FindFieldName(er.names, v)
 	if err != nil {
@@ -2398,7 +2400,7 @@ func (er *expressionRewriter) searchSpVariables(name string) (bool, error) {
 	if !er.sctx.GetSessionVars().GetCallProcedure() {
 		return true, nil
 	}
-	varType, varVar, notFind, err := er.sctx.GetSessionVars().GetProcedureVariable(name)
+	varType, _, notFind, err := er.sctx.GetSessionVars().GetProcedureVariable(name)
 	if err != nil {
 		return false, err
 	}
@@ -2406,24 +2408,12 @@ func (er *expressionRewriter) searchSpVariables(name string) (bool, error) {
 		return true, nil
 	}
 	retType := varType.Clone()
-	switch varVar.Kind() {
-	case types.KindNull:
-		retType.DelFlag(mysql.NotNullFlag)
-	default:
-		retType.AddFlag(mysql.NotNullFlag)
+	f, err := er.newFunction(ast.GetVar, retType, expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString, 0),
+		expression.DatumToConstant(types.NewDatum(1), mysql.TypeLong, 0))
+	if err != nil {
+		return false, err
 	}
-	varVar.SetValue(varVar.GetValue(), retType)
-	value := &expression.Constant{Value: varVar, RetType: retType}
-	value.SetRepertoire(expression.ASCII)
-	if retType.EvalType() == types.ETString {
-		for _, b := range varVar.GetBytes() {
-			// if any character in constant is not ascii, set the repertoire to UNICODE.
-			if b >= 0x80 {
-				value.SetRepertoire(expression.UNICODE)
-				break
-			}
-		}
-	}
-	er.ctxStackAppend(value, types.EmptyName)
+	f.SetCoercibility(expression.CoercibilityImplicit)
+	er.ctxStackAppend(f, types.EmptyName)
 	return false, nil
 }

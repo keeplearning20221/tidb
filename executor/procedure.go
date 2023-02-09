@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -138,7 +139,10 @@ func getProcedureinfo(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name
 	if err != nil {
 		return nil, err
 	}
-	defer recordSet.Close()
+	if recordSet != nil {
+		defer recordSet.Close()
+	}
+
 	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
 	if err != nil {
 		return nil, err
@@ -157,6 +161,44 @@ func getProcedureinfo(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name
 	procedurebodyInfo.CollationConnection = rows[0].GetString(5)
 	procedurebodyInfo.ShemaCollation = rows[0].GetString(6)
 	return procedurebodyInfo, nil
+}
+
+func (e *ShowExec) getRowsProcedure(ctx context.Context, sqlExecutor sqlexec.SQLExecutor) error {
+	sql := new(strings.Builder)
+	var (
+		fieldPatternsLike collate.WildcardPattern
+		fieldFilter       string
+	)
+	if e.Extractor != nil {
+		fieldFilter = e.Extractor.Field()
+		fieldPatternsLike = e.Extractor.FieldPatternLike()
+	}
+	//names = []string{"Db", "Name", "Type", "Definer", "Modified", "Created", "Security_type", "Comment", "character_set_client", "collation_connection", "Database Collation"}
+	sqlexec.MustFormatSQL(sql, "select route_schema, name, type, definer ,last_altered,created,security_type, comment,")
+	sqlexec.MustFormatSQL(sql, "character_set_client, connection_collation,schema_collation from %n.%n ", mysql.SystemDB, mysql.Routines)
+	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
+	if err != nil {
+		return err
+	}
+	if recordSet != nil {
+		defer recordSet.Close()
+	}
+
+	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 1024)
+	if err != nil {
+		return err
+	}
+
+	for _, row := range rows {
+		if fieldFilter != "" && row.GetString(1) != fieldFilter {
+			continue
+		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(row.GetString(1)) {
+			continue
+		}
+		e.appendRow([]interface{}{row.GetString(0), row.GetString(1), row.GetEnum(2).String(), row.GetString(3), row.GetTime(4), row.GetTime(5), row.GetEnum(6).String(),
+			row.GetString(7), row.GetString(8), row.GetString(9), row.GetString(10)})
+	}
+	return nil
 }
 
 func (e *ProcedureExec) newEmptyVars(ctx context.Context, name string, tp *types.FieldType) error {
@@ -336,6 +378,23 @@ func (e *ShowExec) fetchShowCreateProcdure(ctx context.Context) error {
 	//names = []string{"Procedure", "sql_mode", "Create Procedure", "character_set_client", "collation_connection", "Database Collation"}
 	e.appendRow([]interface{}{procedureInfo.Name, procedureInfo.SqlMode, procedureInfo.Procedurebody, procedureInfo.CharacterSetClient,
 		procedureInfo.CollationConnection, procedureInfo.ShemaCollation})
+	return nil
+}
+
+func (e *ShowExec) fetchShowProcedureStatus(ctx context.Context) error {
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	sysSession, err := e.getSysSession()
+	if err != nil {
+		return err
+	}
+	defer e.releaseSysSession(internalCtx, sysSession)
+	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
+	err = e.getRowsProcedure(internalCtx, sqlExecutor)
+	if err != nil {
+		return err
+	}
+	//names = []string{"Db", "Name", "Type", "Definer", "Modified", "Created", "Security_type", "Comment",
+	//"character_set_client", "collation_connection", "Database Collation"}
 	return nil
 }
 

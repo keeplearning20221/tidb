@@ -102,6 +102,7 @@ type ShowExec struct {
 	IfNotExists bool // Used for `show create database if not exists`
 	GlobalScope bool // GlobalScope is used by show variables
 	Extended    bool // Used for `show extended columns from ...`
+	Show        *ast.ShowStmt
 }
 
 type showTableRegionRowItem struct {
@@ -192,7 +193,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowIndex:
 		return e.fetchShowIndex()
 	case ast.ShowProcedureStatus:
-		return e.fetchShowProcedureStatus()
+		return e.fetchShowProcedureStatus(ctx)
 	case ast.ShowPumpStatus:
 		return e.fetchShowPumpOrDrainerStatus(node.PumpNode)
 	case ast.ShowStatus:
@@ -1718,10 +1719,6 @@ func (e *ShowExec) fetchShowPrivileges() error {
 }
 
 func (e *ShowExec) fetchShowTriggers() error {
-	return nil
-}
-
-func (e *ShowExec) fetchShowProcedureStatus() error {
 	return nil
 }
 

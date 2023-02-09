@@ -2724,6 +2724,7 @@ const (
 	ShowGrants
 	ShowTriggers
 	ShowProcedureStatus
+	ShowFunctionStatus
 	ShowIndex
 	ShowProcessList
 	ShowCreateDatabase
@@ -3076,6 +3077,8 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			restoreShowDatabaseNameOpt()
 		case ShowProcedureStatus:
 			ctx.WriteKeyWord("PROCEDURE STATUS")
+		case ShowFunctionStatus:
+			ctx.WriteKeyWord("FUNCTION STATUS")
 		case ShowEvents:
 			ctx.WriteKeyWord("EVENTS")
 			restoreShowDatabaseNameOpt()

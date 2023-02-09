@@ -163,7 +163,7 @@ func getProcedureinfo(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name
 	return procedurebodyInfo, nil
 }
 
-func (e *ShowExec) getRowsProcedure(ctx context.Context, sqlExecutor sqlexec.SQLExecutor) error {
+func (e *ShowExec) getRowsProcedure(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, showType string) error {
 	sql := new(strings.Builder)
 	var (
 		fieldPatternsLike collate.WildcardPattern
@@ -175,7 +175,7 @@ func (e *ShowExec) getRowsProcedure(ctx context.Context, sqlExecutor sqlexec.SQL
 	}
 	//names = []string{"Db", "Name", "Type", "Definer", "Modified", "Created", "Security_type", "Comment", "character_set_client", "collation_connection", "Database Collation"}
 	sqlexec.MustFormatSQL(sql, "select route_schema, name, type, definer ,last_altered,created,security_type, comment,")
-	sqlexec.MustFormatSQL(sql, "character_set_client, connection_collation,schema_collation from %n.%n ", mysql.SystemDB, mysql.Routines)
+	sqlexec.MustFormatSQL(sql, "character_set_client, connection_collation,schema_collation from %n.%n where type = %?", mysql.SystemDB, mysql.Routines, showType)
 	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
 		return err
@@ -381,7 +381,7 @@ func (e *ShowExec) fetchShowCreateProcdure(ctx context.Context) error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowProcedureStatus(ctx context.Context) error {
+func (e *ShowExec) fetchShowProcedureStatus(ctx context.Context, showType string) error {
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	sysSession, err := e.getSysSession()
 	if err != nil {
@@ -389,7 +389,7 @@ func (e *ShowExec) fetchShowProcedureStatus(ctx context.Context) error {
 	}
 	defer e.releaseSysSession(internalCtx, sysSession)
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
-	err = e.getRowsProcedure(internalCtx, sqlExecutor)
+	err = e.getRowsProcedure(internalCtx, sqlExecutor, showType)
 	if err != nil {
 		return err
 	}

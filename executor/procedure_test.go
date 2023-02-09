@@ -1087,4 +1087,5 @@ func TestCallInOutInSQL(t *testing.T) {
 		"test select4 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin", "test select5 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin",
 		"test select6 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin", "test select7 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin",
 		"test select8 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin", "test select9 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin"))
+	tk.MustQuery("show function status").Check(testkit.Rows())
 }

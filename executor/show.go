@@ -193,7 +193,9 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowIndex:
 		return e.fetchShowIndex()
 	case ast.ShowProcedureStatus:
-		return e.fetchShowProcedureStatus(ctx)
+		return e.fetchShowProcedureStatus(ctx, "PROCEDURE")
+	case ast.ShowFunctionStatus:
+		return e.fetchShowProcedureStatus(ctx, "FUNCTION")
 	case ast.ShowPumpStatus:
 		return e.fetchShowPumpOrDrainerStatus(node.PumpNode)
 	case ast.ShowStatus:

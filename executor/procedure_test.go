@@ -610,9 +610,14 @@ func TestSelectInsert(t *testing.T) {
 	userInfoRows := newTk.MustQuery("select * from user_info").Rows()
 	selectRows := newTk.MustQuery(testcases[0].selectSQL).Rows()
 	require.Equal(t, len(userInfoRows), len(selectRows))
-	newTk.MustExec("UPDATE user_info ui SET ui.username = (SELECT CONCAT(u.username, \"-\" ,ua.address) FROM user u left join user_address ua on u.id = ua.user_id WHERE u.id = 1) where ui.user_id = 1")
+	newTk.MustExec("create PROCEDURE update_user_info(in id_in int,out username_out varchar(50)) " +
+		"begin UPDATE user_info ui SET ui.username = (SELECT CONCAT(u.username, \"-\" ,ua.address) " +
+		"FROM user u left join user_address ua on u.id = ua.user_id WHERE u.id = 1) " +
+		"where ui.user_id = id_in;set username_out = (select username from user_info where user_id = id_in);" +
+		"end;")
+	newTk.MustExec("call update_user_info(1,@username_out)")
 	userInfoNameRows := newTk.MustQuery("select username from user_info where user_id = 1").Rows()
-	userNameRows := newTk.MustQuery("SELECT CONCAT(u.username, \"-\" ,ua.address) FROM user u left join user_address ua on u.id = ua.user_id WHERE u.id = 1").Rows()
+	userNameRows := newTk.MustQuery("select @username_out").Rows()
 	require.Equal(t, userInfoNameRows[0], userNameRows[0])
 	destroyEnv(tk)
 }

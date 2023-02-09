@@ -964,6 +964,7 @@ func TestCallInOutInSQL(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.InProcedure()
 	tk.MustExec("use test")
+	tk.MustExec("set timestamp = 1675499582")
 	tk.MustExec("CREATE TABLE `user` ( `id` int(11) NOT NULL, `username` VARCHAR(30) DEFAULT NULL, `password` VARCHAR(30) DEFAULT NULL, " +
 		"`age` int(11) NOT NULL, `sex` int(11) NOT NULL, PRIMARY KEY (`id`), KEY `username` (`username`) ) ENGINE=InnoDB;")
 	tk.MustExec("CREATE TABLE `user_score` ( `id` int(11) NOT NULL, `subject` int(11) NOT NULL, `user_id` int(11) NOT NULL, " +
@@ -1051,4 +1052,23 @@ func TestCallInOutInSQL(t *testing.T) {
 	require.Equal(t, len(tk.Res), 1)
 	tk.Res[0].Check(testkit.Rows("3 taaa password-3 15 1"))
 	tk.ClearProcedureRes()
+	tk.MustExec("update mysql.routines set created ='2023-02-09 19:10:30', last_altered = '2023-02-09 19:10:30'")
+
+	tk.MustQuery("show procedure status").Check(testkit.Rows("test insert_data PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin", "test select1 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin",
+		"test select2 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin", "test select3 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin",
+		"test select4 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin", "test select5 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin",
+		"test select6 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin", "test select7 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin",
+		"test select8 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin", "test select9 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin"))
+	tk.MustQuery("show procedure status like '%insert%'").Check(testkit.Rows("test insert_data PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin"))
+	tk.MustQuery("show procedure status like 'select9'").Check(testkit.Rows("test select9 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin"))
+	tk.MustQuery("show procedure status where DB = 'test'").Check(testkit.Rows("test insert_data PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin", "test select1 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin",
+		"test select2 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin", "test select3 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin",
+		"test select4 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin", "test select5 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin",
+		"test select6 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin", "test select7 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin",
+		"test select8 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin", "test select9 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin"))
+	tk.MustQuery("show procedure status where Type = 'PROCEDURE'").Check(testkit.Rows("test insert_data PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin", "test select1 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin",
+		"test select2 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin", "test select3 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin",
+		"test select4 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin", "test select5 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin",
+		"test select6 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin", "test select7 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin",
+		"test select8 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin", "test select9 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin"))
 }

@@ -471,7 +471,9 @@ func (e *ProcedureExec) parseNode(ctx context.Context, node plannercore.Procedur
 		}
 		defer func() {
 			for id := len(nameList) - 1; id >= 0; id-- {
-				err = e.ctx.GetSessionVars().DeleteProcedureVariable(nameList[id], true)
+				if err == nil {
+					err = e.ctx.GetSessionVars().DeleteProcedureVariable(nameList[id], true)
+				}
 			}
 		}()
 		for _, stmt := range node.(*plannercore.ProcedureBlock).ProcedureProcStmts {
@@ -548,7 +550,9 @@ func (e *ProcedureExec) realizeFunction(ctx context.Context, node *plannercore.P
 	}
 	defer func() {
 		for id := len(nameList) - 1; id >= 0; id-- {
-			err = e.ctx.GetSessionVars().DeleteProcedureVariable(nameList[id], true)
+			if err == nil {
+				err = e.ctx.GetSessionVars().DeleteProcedureVariable(nameList[id], true)
+			}
 		}
 	}()
 	for _, stmt := range node.ProcedureProcStmts {

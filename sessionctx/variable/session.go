@@ -2385,6 +2385,7 @@ func (s *SessionVars) NewProcedureVariable(name string, val types.Datum, fieldty
 	}
 	s.procedureVars.lock.Lock()
 	defer s.procedureVars.lock.Unlock()
+	name = strings.ToLower(name)
 	oldType, ok := s.procedureVars.types[name]
 	if ok {
 		oldvalue, ok := s.procedureVars.values[name]
@@ -2409,6 +2410,7 @@ func (s *SessionVars) GetProcedureVariable(name string) (*types.FieldType, types
 	}
 	s.procedureVars.lock.Lock()
 	defer s.procedureVars.lock.Unlock()
+	name = strings.ToLower(name)
 	varType, ok := s.procedureVars.types[name]
 	if !ok {
 		return nil, types.NewDatum(""), true, nil
@@ -2427,6 +2429,7 @@ func (s *SessionVars) CheckProcedureVariable(name string) bool {
 	}
 	s.procedureVars.lock.Lock()
 	defer s.procedureVars.lock.Unlock()
+	name = strings.ToLower(name)
 	_, ok := s.procedureVars.types[name]
 	if !ok {
 		return false
@@ -2441,6 +2444,7 @@ func (s *SessionVars) UpdateProcedureVariable(name string, datum types.Datum) er
 	}
 	s.procedureVars.lock.Lock()
 	defer s.procedureVars.lock.Unlock()
+	name = strings.ToLower(name)
 	tp, ok := s.procedureVars.types[name]
 	if !ok {
 		return ErrUnknownSystemVar.GenWithStackByArgs(name)
@@ -2459,6 +2463,7 @@ func (s *SessionVars) DeleteProcedureVariable(name string, mayCover bool) error 
 	}
 	s.procedureVars.lock.Lock()
 	defer s.procedureVars.lock.Unlock()
+	name = strings.ToLower(name)
 	delete(s.procedureVars.types, name)
 	delete(s.procedureVars.values, name)
 	if mayCover {

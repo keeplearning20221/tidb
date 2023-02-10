@@ -2768,6 +2768,8 @@ func (cc *ClientConn) MultiHanldeNode(ctx context.Context, stmt ast.StmtNode) (e
 				rs.Close()
 			}
 			return err
+		} else {
+			return err
 		}
 	}
 	return nil

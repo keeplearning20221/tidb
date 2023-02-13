@@ -2764,6 +2764,7 @@ const (
 	ShowPlacementForPartition
 	ShowPlacementLabels
 	ShowSessionStates
+	ShowCreateProcedure
 )
 
 const (
@@ -2786,7 +2787,8 @@ type ShowStmt struct {
 
 	Tp          ShowStmtType // Databases/Tables/Columns/....
 	DBName      string
-	Table       *TableName  // Used for showing columns.
+	Table       *TableName // Used for showing columns.
+	Procedure   *TableName
 	Partition   model.CIStr // Used for showing partition.
 	Column      *ColumnName // Used for `desc table column`.
 	IndexName   model.CIStr
@@ -2852,6 +2854,11 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("CREATE TABLE ")
 		if err := n.Table.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore ShowStmt.Table")
+		}
+	case ShowCreateProcedure:
+		ctx.WriteKeyWord("CREATE PROCEDURE ")
+		if err := n.Procedure.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ShowStmt.Procedure")
 		}
 	case ShowCreateView:
 		ctx.WriteKeyWord("CREATE VIEW ")

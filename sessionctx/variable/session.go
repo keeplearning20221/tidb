@@ -2349,8 +2349,6 @@ func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *se
 	return
 }
 
-<<<<<<< HEAD
-=======
 func (s *SessionVars) SetInCallProcedure() {
 	s.inCallProcedure = true
 }
@@ -2481,7 +2479,6 @@ func (s *SessionVars) DeleteProcedureVariable(name string, mayCover bool) error 
 	return nil
 }
 
->>>>>>> 57e290d... Add call related code
 // TableDelta stands for the changed count for one table or partition.
 type TableDelta struct {
 	Delta    int64

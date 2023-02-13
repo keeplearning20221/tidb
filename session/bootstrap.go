@@ -759,11 +759,13 @@ const (
 	version108 = 108
 	// version109 sets tidb_enable_gc_aware_memory_track to off when a cluster upgrades from some version lower than v6.5.0.
 	version109 = 109
+	// version110 add the table INFORMATION_SCHEMA.routines
+	version110 = 110
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version109
+var currentBootstrapVersion int64 = version110
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -877,6 +879,7 @@ var (
 		upgradeToVer107,
 		upgradeToVer108,
 		upgradeToVer109,
+                upgradeToVer110,
 	}
 )
 
@@ -2228,6 +2231,13 @@ func upgradeToVer109(s Session, ver int64) {
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableGCAwareMemoryTrack, 0)
 }
 
+func upgradeToVer110(s Session, ver int64) {
+	if ver >= version110 {
+		return
+	}
+	doReentrantDDL(s, CreateRouteTable)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2334,6 +2344,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsTableLocked)
 	// Create tidb_ttl_table_status table
 	mustExecute(s, CreateTTLTableStatus)
+        // Create route table mysql.routines
+	mustExecute(s, CreateRouteTable)
 }
 
 // inTestSuite checks if we are bootstrapping in the context of tests.

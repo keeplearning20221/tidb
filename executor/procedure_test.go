@@ -21,6 +21,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/sqlexec"
+
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )

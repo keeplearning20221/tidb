@@ -836,6 +836,12 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		return b.buildSplitRegion(x)
 	case *ast.CompactTableStmt:
 		return b.buildCompactTable(x)
+        case *ast.ProcedureInfo:
+		return b.buildCreateProcedure(ctx, node.(*ast.ProcedureInfo))
+	case *ast.DropProcedureStmt:
+		return b.buildDropProcedure(ctx, node.(*ast.DropProcedureStmt))
+	case *ast.CallStmt:
+		return b.buildCallProcedure(ctx, node.(*ast.CallStmt))
 	}
 	return nil, ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
 }
@@ -3112,6 +3118,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			CountWarningsOrErrors: show.CountWarningsOrErrors,
 			DBName:                show.DBName,
 			Table:                 show.Table,
+			Procedure:             show.Procedure,
 			Partition:             show.Partition,
 			Column:                show.Column,
 			IndexName:             show.IndexName,

@@ -1881,6 +1881,7 @@ type ShowContents struct {
 	Tp        ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName    string
 	Table     *ast.TableName  // Used for showing columns.
+        Procedure *ast.TableName
 	Partition model.CIStr     // Use for showing partition
 	Column    *ast.ColumnName // Used for `desc table column`.
 	IndexName model.CIStr

@@ -59,6 +59,7 @@ type Context struct {
 	pcache        sessionctx.PlanCache
 	level         kvrpcpb.DiskFullOpt
 	inSandBoxMode bool
+	sessionExec   sessionctx.SessionExec
 }
 
 type wrapTxn struct {
@@ -492,3 +493,11 @@ func NewContext() *Context {
 // HookKeyForTest is as alias, used by context.WithValue.
 // golint forbits using string type as key in context.WithValue.
 type HookKeyForTest string
+
+func (c *Context) SetSessionExec(cc sessionctx.SessionExec) {
+	c.sessionExec = cc
+}
+
+func (c *Context) GetSessionExec() sessionctx.SessionExec {
+	return c.sessionExec
+}

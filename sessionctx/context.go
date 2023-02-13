@@ -23,7 +23,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/metrics"	
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -189,6 +190,8 @@ type Context interface {
 	EnableSandBoxMode()
 	// DisableSandBoxMode enable the sandbox mode of this Session
 	DisableSandBoxMode()
+        SetSessionExec(cc SessionExec)
+	GetSessionExec() SessionExec
 }
 
 // TxnFuture is an interface where implementations have a kv.Transaction field and after
@@ -266,4 +269,10 @@ type SysProcTracker interface {
 	UnTrack(id uint64)
 	GetSysProcessList() map[uint64]*util.ProcessInfo
 	KillSysProcess(id uint64)
+}
+
+type SessionExec interface {
+	MultiHanldeNodeWithResult(ctx context.Context, stmt ast.StmtNode) error
+	SqlParse(ctx context.Context, sql string) ([]ast.StmtNode, error)
+	MultiHanldeNode(ctx context.Context, stmt ast.StmtNode) error
 }

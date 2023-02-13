@@ -1874,7 +1874,8 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	prevWarns := sc.GetWarnings()
 	var stmts []ast.StmtNode
 	cc.ctx.GetSessionVars().SetAlloc(cc.chunkAlloc)
-	if stmts, err = cc.ctx.Parse(ctx, sql); err != nil {
+	cc.ctx.SetSessionExec(&ClientConn{cc})
+        if stmts, err = cc.ctx.Parse(ctx, sql); err != nil {
 		cc.onExtensionSQLParseFailed(sql, err)
 		return err
 	}

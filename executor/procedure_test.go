@@ -976,6 +976,12 @@ func TestCallVarDef(t *testing.T) {
 	tk.MustExec("call var8")
 	tk.Res[0].Check(testkit.Rows("9"))
 	tk.ClearProcedureRes()
+
+        sql = `create PROCEDURE var9() begin declare iD varchar(2) default 3; set id := 9; select id;end;`
+        tk.MustExec(sql)
+        tk.MustExec("call var9")
+        tk.Res[0].Check(testkit.Rows("9"))
+        tk.ClearProcedureRes()
 }
 
 func TestCallInOutInSQL(t *testing.T) {

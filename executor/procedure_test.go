@@ -1097,4 +1097,7 @@ func TestCallInOutInSQL(t *testing.T) {
 		"test select6 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin", "test select7 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin",
 		"test select8 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin", "test select9 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin"))
 	tk.MustQuery("show function status").Check(testkit.Rows())
+      tk.MustExec("create procedure delete1() begin delete from user; end;")
+      tk.MustExec("call delete1")
+      tk.MustQuery("select count(*) from user").Check(testkit.Rows("0"))
 }

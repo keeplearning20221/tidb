@@ -14615,6 +14615,7 @@ ProcedureStatementStmt:
 |	RollbackStmt
 |	ExplainStmt
 |	SetOprStmt
+|	DeleteFromStmt
 
 ProcedureUnlabeledBlock:
 	ProcedureBlockContent

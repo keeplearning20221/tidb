@@ -1097,7 +1097,29 @@ func TestCallInOutInSQL(t *testing.T) {
 		"test select6 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin", "test select7 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin",
 		"test select8 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin", "test select9 PROCEDURE  2023-02-09 19:10:30 2023-02-09 19:10:30 DEFINER  utf8mb4 utf8mb4_bin utf8mb4_bin"))
 	tk.MustQuery("show function status").Check(testkit.Rows())
-      tk.MustExec("create procedure delete1() begin delete from user; end;")
-      tk.MustExec("call delete1")
-      tk.MustQuery("select count(*) from user").Check(testkit.Rows("0"))
+        tk.MustExec("create procedure delete1() begin delete from user; end;")
+        tk.MustExec("call delete1")
+        tk.MustQuery("select count(*) from user").Check(testkit.Rows("0"))
+        tk.MustExec(`create table t3 ( d date, i int, f double, s varchar(32) )`)
+	tk.MustExec("drop procedure if exists nullset")
+	tk.MustExec(`create procedure nullset()
+	begin
+	  declare ld date;
+	  declare li int;
+	  declare lf double;
+	  declare ls varchar(32);
+	
+	  set ld = null, li = null, lf = null, ls = null;
+	  insert into t3 values (ld, li, lf, ls);
+	
+	  insert into t3 (i, f, s) values ((ld is null), 1,    "ld is null"),
+									  ((li is null), 1,    "li is null"),
+					  ((li = 0),     null, "li = 0"),
+					  ((lf is null), 1,    "lf is null"),
+					  ((lf = 0),     null, "lf = 0"),
+					  ((ls is null), 1,    "ls is null");
+	end`)
+	tk.MustExec(`call nullset()`)
+	tk.MustQuery(`select * from t3`).Sort().Check(testkit.Rows("<nil> 1 1 ld is null", "<nil> 1 1 lf is null", "<nil> 1 1 li is null",
+		"<nil> 1 1 ls is null", "<nil> <nil> <nil> <nil>", "<nil> <nil> <nil> lf = 0", "<nil> <nil> <nil> li = 0"))
 }

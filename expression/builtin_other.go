@@ -1057,6 +1057,9 @@ func (b *builtinGetStringVarSig) evalString(row chunk.Row) (string, bool, error)
 				if err != nil {
 					return "", false, err
 				}
+                                if v.IsNull() {
+					return "", true, nil
+				}
 				res, err := v.ToString()
 				if err != nil {
 					return "", false, err
@@ -1136,6 +1139,9 @@ func (b *builtinGetIntVarSig) evalInt(row chunk.Row) (int64, bool, error) {
 				if err != nil {
 					return 0, false, err
 				}
+				if v.IsNull() {
+					return 0, true, nil
+				}
 				res := v.GetInt64()
 				return res, false, nil
 			}
@@ -1200,6 +1206,9 @@ func (b *builtinGetRealVarSig) evalReal(row chunk.Row) (float64, bool, error) {
 				if err != nil {
 					return 0, false, err
 				}
+				if v.IsNull() {
+					return 0, true, nil
+				}
 				res := v.GetFloat64()
 				return res, false, nil
 			}
@@ -1263,6 +1272,9 @@ func (b *builtinGetDecimalVarSig) evalDecimal(row chunk.Row) (*types.MyDecimal, 
 			if _, v, noFind, err := sessionVars.GetProcedureVariable(varName); !noFind || err != nil {
 				if err != nil {
 					return nil, false, err
+				}
+				if v.IsNull() {
+					return nil, true, nil
 				}
 				res := v.GetMysqlDecimal()
 				return res, false, nil
@@ -1335,6 +1347,9 @@ func (b *builtinGetTimeVarSig) evalTime(row chunk.Row) (types.Time, bool, error)
 			if _, v, noFind, err := sessionVars.GetProcedureVariable(varName); !noFind || err != nil {
 				if err != nil {
 					return types.ZeroTime, false, err
+				}
+				if v.IsNull() {
+					return types.ZeroTime, true, nil
 				}
 				res := v.GetMysqlTime()
 				return res, false, nil

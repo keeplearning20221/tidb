@@ -982,6 +982,15 @@ func TestCallVarDef(t *testing.T) {
         tk.MustExec("call var9")
         tk.Res[0].Check(testkit.Rows("9"))
         tk.ClearProcedureRes()
+
+        sql = `create procedure zap(x int, out y int)
+	begin
+	declare z int;
+	set z = x+1, y = z;
+	end`
+	tk.MustExec(sql)
+	tk.MustExec("call zap(7,@zap)")
+	tk.MustQuery("select @zap").Check(testkit.Rows("8"))
 }
 
 func TestCallInOutInSQL(t *testing.T) {

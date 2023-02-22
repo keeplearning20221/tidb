@@ -836,7 +836,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		return b.buildSplitRegion(x)
 	case *ast.CompactTableStmt:
 		return b.buildCompactTable(x)
-        case *ast.ProcedureInfo:
+	case *ast.ProcedureInfo:
 		return b.buildCreateProcedure(ctx, node.(*ast.ProcedureInfo))
 	case *ast.DropProcedureStmt:
 		return b.buildDropProcedure(ctx, node.(*ast.DropProcedureStmt))
@@ -959,26 +959,37 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (Plan, error
 			IsGlobal: vars.IsGlobal,
 			IsSystem: vars.IsSystem,
 		}
+		procedureVar := false
 		if _, ok := vars.Value.(*ast.DefaultExpr); !ok {
 			if cn, ok2 := vars.Value.(*ast.ColumnNameExpr); ok2 && cn.Name.Table.L == "" {
 				// Convert column name expression to string value expression.
 				char, col := b.ctx.GetSessionVars().GetCharsetInfo()
 				// support set a=b in sp
-				_, val, notFind, err := b.ctx.GetSessionVars().GetProcedureVariable(cn.Name.Name.O)
+				varType, _, notFind, err := b.ctx.GetSessionVars().GetProcedureVariable(cn.Name.Name.O)
 				if err != nil {
 					return nil, err
 				}
 				if !notFind {
-					vars.Value = ast.NewValueExpr(val.GetValue(), char, col)
+					procedureVar = true
+					retType := varType.Clone()
+					procedureVars, err := expression.NewFunction(b.ctx, ast.GetVar, retType,
+						expression.DatumToConstant(types.NewStringDatum(cn.Name.Name.L), mysql.TypeString, 0),
+						expression.DatumToConstant(types.NewDatum(1), mysql.TypeLong, 0))
+					if err != nil {
+						return nil, err
+					}
+					assign.Expr = procedureVars
 				} else {
 					vars.Value = ast.NewValueExpr(cn.Name.Name.O, char, col)
 				}
 			}
-			mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-			var err error
-			assign.Expr, _, err = b.rewrite(ctx, vars.Value, mockTablePlan, nil, true)
-			if err != nil {
-				return nil, err
+			if !procedureVar {
+				mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+				var err error
+				assign.Expr, _, err = b.rewrite(ctx, vars.Value, mockTablePlan, nil, true)
+				if err != nil {
+					return nil, err
+				}
 			}
 		} else {
 			assign.IsDefault = true

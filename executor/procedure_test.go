@@ -170,6 +170,9 @@ func TestCreateShowDropProcedure(t *testing.T) {
 	tk.MustExec("drop procedure sp_test1")
 	tk.MustGetErrCode("drop procedure proc_1", 1305)
 	tk.MustExec("drop procedure if exists proc_1")
+	tk.MustExec("set @@sql_mode = 'ANSI_QUOTES'")
+	tk.MustExec("create procedure sP_test2(id int) begin select@b; end;")
+	tk.MustQuery("show create procedure sp_test2").Check(testkit.Rows("sP_test2 ANSI_QUOTES  CREATE PROCEDURE `sP_test2`(id int) begin select@b; end utf8mb4 utf8mb4_bin utf8mb4_bin"))
 }
 
 func TestBaseCall(t *testing.T) {

@@ -303,12 +303,12 @@ func (e *ProcedureExec) createProcedure(ctx context.Context, s *ast.ProcedureInf
 	parameterStr := s.ProcedureParamStr
 
 	bodyStr := s.ProcedureBody.Text()
-	sqlMod := variable.GetSysVar(variable.SQLModeVar)
-	if sqlMod == nil {
+	sqlMod, ok := e.ctx.GetSessionVars().GetSystemVar(variable.SQLModeVar)
+	if !ok {
 		return errors.New("unknown system var " + variable.SQLModeVar)
 	}
-	chs := variable.GetSysVar(variable.CharacterSetClient)
-	if chs == nil {
+	chs, ok := e.ctx.GetSessionVars().GetSystemVar(variable.CharacterSetClient)
+	if !ok {
 		return errors.New("unknown system var " + variable.CharacterSetClient)
 	}
 	var userInfo string
@@ -323,7 +323,7 @@ func (e *ProcedureExec) createProcedure(ctx context.Context, s *ast.ProcedureInf
 	sqlexec.MustFormatSQL(sql, "insert into mysql.routines (route_schema, name, type, definition, definition_utf8, parameter_str,")
 	sqlexec.MustFormatSQL(sql, "is_deterministic, sql_data_access, security_type, definer, sql_mode, character_set_client, connection_collation, schema_collation, created, last_altered, comment, ")
 	sqlexec.MustFormatSQL(sql, " external_language) values (%?, %?, 'PROCEDURE', %?, %?, %?, 0, 'CONTAINS SQL', 'DEFINER', %?, %?, %?, %?, %?, now(), now(),  '', 'SQL') ;", procedurceSchema.String(), procedurceName,
-		bodyStr, bodyStr, parameterStr, userInfo, sqlMod.Value, chs.Value, sessionCollation, dbInfo.Collate)
+		bodyStr, bodyStr, parameterStr, userInfo, sqlMod, chs, sessionCollation, dbInfo.Collate)
 	sysSession, err := e.getSysSession()
 	if err != nil {
 		return err

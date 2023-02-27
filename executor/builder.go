@@ -309,7 +309,7 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildCTETableReader(v)
 	case *plannercore.CompactTable:
 		return b.buildCompactTable(v)
-        case *plannercore.CreateProcedure:
+	case *plannercore.CreateProcedure:
 		return b.buildCreateProcedure(v)
 	case *plannercore.DropProcedure:
 		return b.buildDropProcedure(v)

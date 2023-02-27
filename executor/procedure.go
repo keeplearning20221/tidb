@@ -626,6 +626,7 @@ func (e *ProcedureExec) inParam(ctx context.Context, param *plannercore.Procedur
 	datum, ok := e.ctx.GetSessionVars().GetUserVarVal(inName)
 	if !ok {
 		datum = types.NewDatum("")
+		datum.SetNull()
 	}
 	newdatum, err := datum.Clone().ConvertTo(e.ctx.GetSessionVars().StmtCtx, param.DeclType)
 	if err != nil {
@@ -696,8 +697,12 @@ func (e *ProcedureExec) outParams() error {
 		if notFind {
 			continue
 		}
-		e.ctx.GetSessionVars().SetUserVarVal(v, datum)
-		e.ctx.GetSessionVars().SetUserVarType(v, varType)
+		if datum.IsNull() {
+			e.ctx.GetSessionVars().UnsetUserVar(v)
+		} else {
+			e.ctx.GetSessionVars().SetUserVarVal(v, datum)
+			e.ctx.GetSessionVars().SetUserVarType(v, varType)
+		}
 	}
 	return nil
 }

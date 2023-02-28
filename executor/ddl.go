@@ -17,11 +17,13 @@ package executor
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -39,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -330,6 +333,10 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 		if err != nil {
 			return err
 		}
+	}
+	err = e.dropProcedure(dbName)
+	if err != nil {
+		return err
 	}
 	return err
 }
@@ -734,4 +741,32 @@ func (e *DDLExec) executeDropPlacementPolicy(s *ast.DropPlacementPolicyStmt) err
 
 func (e *DDLExec) executeAlterPlacementPolicy(s *ast.AlterPlacementPolicyStmt) error {
 	return domain.GetDomain(e.ctx).DDL().AlterPlacementPolicy(e.ctx, s)
+}
+
+func (e *DDLExec) dropProcedure(schemaName model.CIStr) error {
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	sysSession, err := e.getSysSession()
+	if err != nil {
+		return err
+	}
+	sysvar := variable.GetSysVar(variable.LowerCaseTableNames)
+	val, err := strconv.Atoi(sysvar.Value)
+	if err != nil {
+		return err
+	}
+	is := schematracker.NewSchemaTracker(val)
+	key := is.InfoStore.CiStr2Key(schemaName)
+	defer e.releaseSysSession(internalCtx, sysSession)
+	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
+	sql := new(strings.Builder)
+	sqlexec.MustFormatSQL(sql, "delete from  %n.%n where route_schema = %?", mysql.SystemDB, mysql.Routines, key)
+	_, err = sqlExecutor.ExecuteInternal(internalCtx, sql.String())
+	if err != nil {
+		return err
+	}
+	_, err = sqlExecutor.ExecuteInternal(internalCtx, "commit")
+	if err != nil {
+		return err
+	}
+	return nil
 }

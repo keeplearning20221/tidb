@@ -16,9 +16,11 @@ package executor
 
 import (
 	"context"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -717,6 +719,22 @@ func (e *ProcedureExec) callProcedure(ctx context.Context, s *ast.CallStmt) erro
 	e.ctx.GetSessionVars().ClientCapability = (e.ctx.GetSessionVars().ClientCapability | mysql.ClientMultiStatements)
 	e.ctx.GetSessionVars().SetInCallProcedure()
 	e.ctx.GetSessionVars().NewProcedureVariables()
+
+	// sp use routines database as default database.
+	sysvar := variable.GetSysVar(variable.LowerCaseTableNames)
+	val, err := strconv.Atoi(sysvar.Value)
+	if err != nil {
+		return err
+	}
+	is := schematracker.NewSchemaTracker(val)
+	key := is.InfoStore.CiStr2Key(s.Procedure.Schema)
+	if key != e.ctx.GetSessionVars().CurrentDB {
+		oldDB := e.ctx.GetSessionVars().CurrentDB
+		defer func() {
+			e.ctx.GetSessionVars().CurrentDB = oldDB
+		}()
+		e.ctx.GetSessionVars().CurrentDB = key
+	}
 	defer func() {
 		e.ctx.GetSessionVars().ClientCapability = clientCapabilitySave
 		variable.SetSysVar(variable.TiDBMultiStatementMode, mutliStateModeSave.Value)
@@ -729,7 +747,7 @@ func (e *ProcedureExec) callProcedure(ctx context.Context, s *ast.CallStmt) erro
 	sc.DividedByZeroAsWarning = !vars.StrictSQLMode
 	sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || sc.AllowInvalidDate
-	err := e.callParam(ctx, s)
+	err = e.callParam(ctx, s)
 	if err != nil {
 		return err
 	}

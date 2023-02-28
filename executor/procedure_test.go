@@ -1134,4 +1134,16 @@ func TestCallInOutInSQL(t *testing.T) {
 	tk.MustExec(`call nullset()`)
 	tk.MustQuery(`select * from t3`).Sort().Check(testkit.Rows("<nil> 1 1 ld is null", "<nil> 1 1 lf is null", "<nil> 1 1 li is null",
 		"<nil> 1 1 ls is null", "<nil> <nil> <nil> <nil>", "<nil> <nil> <nil> lf = 0", "<nil> <nil> <nil> li = 0"))
+	tk.MustExec("truncate table t3")
+        tk.ClearProcedureRes()
+	tk.MustExec("create database test2")
+        tk.MustExec("use test2")
+        tk.MustExec("call test.nullset()")
+        tk.MustQuery(`select * from test.t3`).Sort().Check(testkit.Rows("<nil> 1 1 ld is null", "<nil> 1 1 lf is null", "<nil> 1 1 li is null",
+                "<nil> 1 1 ls is null", "<nil> <nil> <nil> <nil>", "<nil> <nil> <nil> lf = 0", "<nil> <nil> <nil> li = 0"))
+        tk.ClearProcedureRes()
+        tk.MustExec(`create procedure select9(id int,name char(100))begin update user set username = LOWER(name) where user.id = id;
+        select * from user where user.id = id; end;`)
+        tk.MustExec("drop database test2")
+	tk.MustQuery("select * from mysql.routines where route_schema = 'test2' and name = 'select9'").Check(testkit.Rows())
 }
